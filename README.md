@@ -1,6 +1,6 @@
 English | [简体中文](README.zh-CN.md)
 
-# lolping
+# Just another LoL ping like DSH tool
 
 A desktop ping-wheel overlay for Windows 11, in the visual style of the League
 of Legends ping wheel. Hold a modifier key and a mouse button, drag toward one
