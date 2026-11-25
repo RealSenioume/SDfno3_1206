@@ -18,7 +18,7 @@ vector `QPainterPath` geometry generated in `src/lolping/assets.py`, and the
 sound cues are synthesised in `src/lolping/sounds.py`, so the repository
 contains no Riot Games assets and no binary media files.
 
-- Version: **0.3.4**
+- Version: **0.4.0**
 - Platform: **Windows 11** (64-bit)
 - Runtime: **Python 3.14**, **PyQt5 5.15.11**, **pynput 1.8.2**
 - No other runtime dependencies, no network access at runtime

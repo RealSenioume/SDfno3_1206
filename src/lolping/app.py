@@ -26,8 +26,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PyQt5.QtCore import QEvent, QObject, QPoint, QTimer, Qt
-from PyQt5.QtGui import QGuiApplication
+from PyQt5.QtCore import QEvent, QObject, QPoint, QTimer, Qt, QUrl
+from PyQt5.QtGui import QDesktopServices, QGuiApplication
 from PyQt5.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QAction,
@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (
     QSystemTrayIcon,
 )
 
-from . import __version__, assets, autostart, sounds
+from . import __version__, actions, assets, autostart, intent, ocr, overlay, search, sounds
 from .config import Config, app_data_dir, latency_path, log_path
 from .hotkeys import format_hotkey
 from .input_hook import InputBridge, InputHook
@@ -342,6 +342,118 @@ class PingApp:
         self._append_ping(name, point)
         if self._tray.isVisible():
             self._tray.setToolTip(f"lolping \u2014 last ping: {name}")
+        self._dsh_after_commit(name, point)
+
+    # ------------------------------------------------------------------ dsh
+    def _dsh_after_commit(self, name: str, point: QPoint) -> None:
+        """Emit an intent / open a page when the slice has an injected action."""
+        if not bool(getattr(self._config, "dsh_mode", False)):
+            return
+        action = actions.sector_action(name)
+        if action is None:
+            return
+        if action == actions.OPEN_SEARCH:
+            # The frames fade from the moment of release; the delayed capture
+            # happens after the overlay is gone, so nothing leaks into it.
+            # Let the wheel and ring choreography finish before leaving lolping.
+            QTimer.singleShot(
+                dsh_delay_ms(self._config),
+                lambda: self._dsh_open_search(name, point),
+            )
+            return
+        # Region capture: wait for the ring animation, then hide the overlay,
+        # let the compositor settle, and grab the region underneath.
+        self._pending_dsh = (name, QPoint(point))
+        QTimer.singleShot(dsh_delay_ms(self._config), self._begin_dsh_capture)
+
+    def _dsh_open_search(self, name: str, point: QPoint) -> None:
+        """Capture the centre 320x180 region, OCR it, then route the search."""
+        screen = QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
+        width, height = 320, 180
+        region = None
+        screenshot = ""
+        if screen is not None:
+            area = screen.geometry()
+            x = max(area.x(), min(point.x() - width // 2, area.x() + area.width() - width))
+            y = max(area.y(), min(point.y() - height // 2, area.y() + area.height() - height))
+            region = (x, y, width, height)
+            stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            destination = intent.regions_dir() / f"search-{stamp}.png"
+            if intent.capture_region(screen, region, destination):
+                screenshot = str(destination)
+        result = ocr.recognize(screenshot) if screenshot else None
+        score, query = ocr.usability(result)
+        decision = search.decide(query, score)
+        self._write_dsh_intent(
+            name, point, actions.OPEN_SEARCH,
+            region=region, screenshot=screenshot,
+            text=query, score=score, mode=decision.mode,
+        )
+        for url in search.urls_for(decision):
+            QDesktopServices.openUrl(QUrl(url))
+        if decision.mode in ("both", "image") and screenshot:
+            clipboard = QGuiApplication.clipboard()
+            if clipboard is not None:
+                clipboard.setPixmap(QPixmap(screenshot))
+
+        log.info(
+            "search route %s (score=%s, query=%r)", decision.mode, score, query[:60]
+        )
+
+    def _begin_dsh_capture(self) -> None:
+        if not getattr(self, "_pending_dsh", None):
+            return
+        self._overlay.hide_all()
+        QTimer.singleShot(150, self._capture_dsh_region)
+
+    def _write_dsh_intent(
+        self, name: str, point: QPoint, action: str,
+        region: tuple[int, int, int, int] | None = None,
+        screenshot: str = "",
+        text: str = "",
+        score: int = 0,
+        mode: str = "",
+    ) -> None:
+        record = intent.make_record(
+            sector=self._sector_index(name),
+            name=name,
+            action=action,
+            x=point.x(),
+            y=point.y(),
+            region=region,
+            screenshot=screenshot,
+            text=text,
+            score=score,
+            mode=mode,
+        )
+        try:
+            path = intent.append_intent(record)
+        except OSError:
+            log.exception("cannot append the DSH intent")
+            return
+        log.info("dsh intent %s -> %s", action, path)
+
+    def _capture_dsh_region(self) -> None:
+        pending = getattr(self, "_pending_dsh", None)
+        self._pending_dsh = None
+        if not pending:
+            return
+        name, point = pending
+        screen = QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.geometry()
+        width, height = 640, 360
+        x = max(area.x(), min(point.x() - width // 2, area.x() + area.width() - width))
+        y = max(area.y(), min(point.y() - height // 2, area.y() + area.height() - height))
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        destination = intent.regions_dir() / f"region-{stamp}.png"
+        saved = intent.capture_region(screen, (x, y, width, height), destination)
+        self._write_dsh_intent(
+            name, point, actions.CAPTURE_REGION,
+            region=(x, y, width, height),
+            screenshot=str(destination) if saved else "",
+        )
 
     def _on_health(self, healthy: bool) -> None:
         if healthy:
@@ -467,16 +579,19 @@ class PingApp:
             return
         self._settings_open = True
         try:
-            edited = SettingsDialog.edit(
+            SettingsDialog.edit(
                 self._config,
                 None,
                 pause_state_getter=lambda: self._paused,
                 pause_toggled=self._set_trigger_enabled,
+                on_apply=self._apply_config,
+                wheel_activity=self._overlay.wheel_active_changed,
             )
         finally:
             self._settings_open = False
-        if edited is None:
-            return
+
+    def _apply_config(self, edited: Config) -> None:
+        """Apply settings from the dialog's Apply button (dialog stays open)."""
         if edited.start_with_windows != autostart.is_enabled():
             autostart.set_enabled(edited.start_with_windows)
         self._config = edited
@@ -519,6 +634,13 @@ class PingApp:
 
 
 # --------------------------------------------------------------------- self test
+def dsh_delay_ms(config) -> int:
+    """How long to let the commit animation run before a DSH action fires."""
+    ring_ms = getattr(overlay, "COMMIT_ANIMATION_MS", 450)
+    mark_ms = int(getattr(config, "mark_duration_ms", 900)) + 50
+    return max(ring_ms, mark_ms)
+
+
 def run_self_test() -> int:
     """Headless smoke test used by tools/smoke_test.py and CI."""
     _apply_dpi_attributes()

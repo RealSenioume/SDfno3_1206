@@ -1,8 +1,8 @@
-# 2. Requirements — lolping v0.3.4
+# 2. Requirements — lolping v0.4.0
 
 ## 2.1 Purpose and conventions
 
-This document states what lolping v0.3.4 must do. It derives from the frozen
+This document states what lolping v0.4.0 must do. It derives from the frozen
 module contract in `docs/00-interfaces.md`, extended by the v0.3.0 and v0.3.1 feature briefs
 for slice artwork, animation and sound, and is the reference for the design
 (`docs/03-design.md`) and tests (`docs/04-test-plan.md`). "Must" marks a
@@ -77,7 +77,7 @@ mandatory requirement. Values that are not fixed yet are written as
 | FR-19 | The CLI accepts `--config PATH`, `--latency-probe`, `--debug` and `--self-test`. `--debug` gives verbose logs; `--self-test` runs the built-in headless self-test (opens the wheel offscreen, commits a test ping, prints `SELF-TEST OK`) and exits before the tray application starts; unknown arguments produce a clear error. | Each flag behaves as described; `--self-test` exits with code 0 after printing `SELF-TEST OK`; `--help` lists the documented flags; an unknown flag is rejected with a readable message. |
 | FR-20 | The tray icon offers Settings…, Ping history log, Open config folder, Pause/Resume and Quit. While paused, the trigger must not open the wheel; the menu entry shows the current state. | Pause: the gesture does nothing; Resume: it works; the other entries open the log and config folder. |
 | FR-21 | Overlays are created lazily, one per screen, using each screen's logical geometry, and re-fitted when screens are added, removed or rescaled. The wheel opens on the cursor's screen. | On two monitors with different scaling the wheel is centred and correctly sized on the right monitor; disconnecting a monitor does not crash the app. |
-| FR-22 | The `theme` setting selects the wheel palette: `gold` (default), `blue` or `red`. | Colour changes apply; the choice survives a restart. |
+| FR-22 | v0.4.0 fixes the wheel to the `jarvis` appearance; the theme selector is gone. | Colour changes apply; the choice survives a restart. |
 
 ### 2.4.5 Visual and audio feedback
 
@@ -98,7 +98,7 @@ mandatory requirement. Values that are not fixed yet are written as
 | `trigger_mouse_button` | `left` | left, right, middle, x1, x2 |
 | `wheel_radius` | 130 | 60–400 (logical px) |
 | `dead_zone` | 34 | 5 to `wheel_radius − 20` |
-| `sector_count` | 8 | fixed at 8 in v0.3.4 |
+| `sector_count` | 8 | fixed at 8 in v0.4.0 |
 | `sectors` | On My Way, All-In, Assist Me, Need Vision, Enemy Missing, Enemy Vision, Danger, Push | eight names |
 | `animation_tau` | 0.035 | 0.005–0.5 |
 | `mark_duration_ms` | 900 | 300–4000 |
@@ -107,7 +107,9 @@ mandatory requirement. Values that are not fixed yet are written as
 | `open_settings_on_start` | `true` | show the settings window once at start-up |
 | `start_with_windows` | false | true / false |
 | `show_labels` | true | true / false |
-| `theme` | `gold` | gold, blue, red, lol |
+| `theme` | `jarvis` | jarvis (fixed in v0.4.0; other themes removed) |
+| `jarvis_backdrop` | `50` | 0-100 (percent of the dark plate behind the jarvis rings) |
+| `dsh_mode` | `false` | only slices with an injected DSH action stay selectable |
 | `show_icons` | true | true / false |
 | `sector_icons` | `on_my_way`, `all_in`, `assist`, `vision`, `missing`, `enemy_vision`, `danger`, `push` | any of the ten icon ids, per slice |
 | `sector_images` | eight empty strings | PNG path or `""` (vector icon), per slice |
@@ -248,6 +250,10 @@ with a requirement-to-test-case table. Unmeasured performance values remain
 
 | ID | Requirement | Acceptance |
 | --- | --- | --- |
+| FR-33 | A DSH bundle skeleton (plugin/lolping-intents) exposes the intent log as the lolping_intents tool and optionally watches it; the agent can then act on Enemy Missing captures. | Tool returns the last N intents with region/screenshot paths; watcher logs new commits; bundle installs through the DSH bundle installer. |
+| FR-32 | The settings window has a night-mode toggle, an **Apply** button that applies without closing, and a live wheel preview (280×280) that renders the real wheel over a live, blurred capture of the desktop behind it. Form changes update the preview immediately; only Apply changes the desktop wheel. | Toggling night mode restyles the whole dialog; Apply keeps the dialog open and invokes the app; closing without Apply leaves the desktop wheel unchanged; the preview shows the live background under the frosted plate and loops wake → idle → select Enemy Missing → idle → deselect → exit. While the desktop wheel is on screen the preview pauses; it resumes when the wheel disappears. |
+| FR-31 | `On My Way` in DSH mode captures the centre 320×180 region, runs the offline Windows OCR, scores the text (0-100) and routes: >=70 text search, 30-70 text search with the image on the clipboard, <30 image search. One JSON intent line records the score, query and mode. | Clear text opens one text-search tab; mid score also copies the screenshot; low score copies the image and opens the image-search page. |
+| FR-30 | `dsh_mode` dims slices without an injected action and makes them unselectable; injected slices emit one JSON-line intent per commit `%APPDATA%\lolping-desktop\intents.jsonl`, with a region screenshot under `regions/` for capture actions. | In DSH mode only injected slices can be committed; each commit appends exactly one intent line; the capture action writes a PNG region file. |
 | FR-29 | The wheel offers a League-inspired skin (`theme = "lol"`): gold separators, outward light beams and a centre medallion carrying PING / BACK, drawn entirely in code. | Selecting the theme renders the skin on every monitor without any image file. |
 | FR-30 | Slice icons may be overridden by local `<icon id>.png` files placed in `assets/icons/`; the files are never committed and a missing or corrupt file falls back to the vector icon. | No configuration or missing file can produce an empty slice. |
 | FR-31 | A click without dragging (pointer travel <= 8 px) commits the basic centre ping; releasing inside the dead zone after a real drag cancels. | A click logs one `Ping` record; drag-and-return logs nothing. |

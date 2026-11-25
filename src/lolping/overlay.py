@@ -45,14 +45,16 @@ from PyQt5.QtGui import (
     QPainterPath,
     QPaintEvent,
     QPen,
+    QPixmap,
     QPolygonF,
     QRadialGradient,
     QScreen,
 )
 from PyQt5.QtWidgets import QWidget
 
-from . import assets
+from . import actions, assets, geo
 from .config import Config
+from .jarvis import JarvisRenderer
 from .geometry import (
     approach,
     clamp,
@@ -68,13 +70,10 @@ __all__ = ["OverlayManager", "OverlayWindow", "THEME_ACCENTS"]
 
 #: Accent colour per ``Config.theme`` value.
 THEME_ACCENTS: dict[str, tuple[int, int, int]] = {
-    "gold": (220, 180, 60),
-    "blue": (90, 160, 240),
-    "red": (230, 90, 80),
-    "lol": (198, 168, 96),
+    "jarvis": (255, 190, 96),
 }
 
-_DEFAULT_ACCENT = THEME_ACCENTS["gold"]
+_DEFAULT_ACCENT = THEME_ACCENTS["jarvis"]
 
 _FRAME_INTERVAL_MS = 16  # ~60 Hz
 _MAX_FRAME_DT = 0.05  # clamp dt so a stalled frame does not jump the animation
@@ -100,17 +99,27 @@ _ICON_HOVER_GROWTH = 0.10  # hovered icon is 10 % bigger
 _ICON_IDLE_COLOUR = (235, 235, 235)
 _ICON_IDLE_ALPHA = 200
 
-# --- v0.3.2 "lol" skin (League-inspired) ---------------------------------------
-_LOL_MEDALLION_FACTOR = 0.46  # centre medallion radius, as a fraction of R
-_LOL_BEAM_REACH = 1.38  # radial light beams extend past the wheel rim
-_LOL_BEAM_IDLE = 40  # beam opacity for a slice that is not hovered
-_LOL_BEAM_HOVER = 70  # extra beam opacity for the hovered slice
-_LOL_DISC_ALPHA = 26  # barely-there dark disc that reads as the wheel surface
-_LOL_GOLD = (198, 168, 96)
-_LOL_LINE_ALPHA = 130  # slice separators
-_LOL_RING_ALPHA = 110  # outer rim and medallion rim
-_LOL_ICON_FACTOR = 0.65  # icon centre, as a fraction of R
-_LOL_ICON_COLOUR = (214, 192, 140)
+# --- v0.4.0 jarvis ring choreography -------------------------------------------
+_JARVIS_SPANS = (geo.WINDOW_SPAN_INNER, geo.WINDOW_SPAN, geo.WINDOW_SPAN)
+_JARVIS_SPEEDS = (geo.SPEED_INNER, geo.SPEED_MIDDLE, geo.SPEED_OUTER)
+_JARVIS_FOCUS_TIME = 0.5      # drag-selection shrink
+_JARVIS_FOCUS_SPAN = 60.0     # span while a slice is selected
+_JARVIS_COMMIT_TIME = 0.2     # release shrink
+_JARVIS_COMMIT_SPAN = 45.0    # the selected slice's own span
+_JARVIS_COMMIT_FADE = 0.2
+_JARVIS_CANCEL_RESTORE = 0.3
+_JARVIS_CANCEL_FADE = 0.5
+_JARVIS_CENTRE_TIME = 0.5
+_JARVIS_RESTORE_TIME = 0.3
+#: Commit shrink + fade, plus a frame of slack; used by the DSH bridge.
+COMMIT_ANIMATION_MS = int((_JARVIS_COMMIT_TIME + _JARVIS_COMMIT_FADE) * 1000.0) + 50
+
+# --- search-sector frames -----------------------------------------------------
+_SEARCH_CAPTURE = (640, 360)  # outer frame: what the screenshot covers
+_SEARCH_DECIDE = (320, 180)   # inner frame: what OCR looks at
+_SEARCH_FADE_IN = 0.15
+_SEARCH_FADE_OUT = 0.20
+_SEARCH_DIM = 0.22            # wheel opacity while the frames are visible
 
 # --- v0.3.2 click-to-ping ------------------------------------------------------
 _CLICK_MAX_DISTANCE = 8.0  # travel from the centre still treated as a click
@@ -163,6 +172,23 @@ class OverlayWindow(QWidget):
         self._captured = False
         self._warmed = False
         self._max_distance = 0.0  # furthest the pointer travelled this gesture
+        self._jarvis = JarvisRenderer()
+        self._jarvis.warm_labels(float(config.wheel_radius))
+        self._jarvis_frost: QPixmap | None = None
+        self._jarvis_rot = [geo.PHASE_INNER, geo.PHASE_MIDDLE, geo.PHASE_OUTER]
+        self._jarvis_shift = 0.0
+        self._jarvis_last = time.perf_counter()
+        self._jarvis_mode = "idle"
+        self._jarvis_mode_start = 0.0
+        self._jarvis_focus_angle = 0.0
+        self._jarvis_from: tuple[tuple[float, float], ...] | None = None
+        self._jarvis_opacity = 1.0
+        self._jarvis_ring_scale = 1.0
+        self._search_frames_alpha = 0.0
+        self._search_frames_hold = False
+        # Continuous clock: the rings keep turning between openings and while
+        # the cursor idles in the dead zone.
+        self._jarvis_born = time.perf_counter()
 
         self._setup_window()
 
@@ -248,9 +274,11 @@ class OverlayWindow(QWidget):
         if count != self._count:
             self._count = count
             self._weights = [0.0] * count
+        self._jarvis.warm_labels(float(config.wheel_radius))
         if self._open:
             self._hover = self._hovered_sector()
             self.update()
+        self._jarvis_frost = None
 
     def begin(self, global_pos: QPoint) -> None:
         """Show the wheel centred on ``global_pos`` and start the animation."""
@@ -262,6 +290,30 @@ class OverlayWindow(QWidget):
         self._last_tick = time.perf_counter()
         self._opened_at = self._last_tick  # drives the 0.13 s open animation
         self._max_distance = 0.0
+        self._jarvis.reset()
+        self._jarvis_frost = None
+        # Rotation is intentionally *not* reset: the rings keep turning in real
+        # time between gestures, so releasing or cancelling never snaps them
+        # back to the initial phase.
+        gap = max(0.0, min(600.0, self._opened_at - self._jarvis_last))
+        if gap > 0.0:
+            self._jarvis_rot = [
+                (rot + speed * gap) % 360.0
+                for rot, speed in zip(self._jarvis_rot, _JARVIS_SPEEDS)
+            ]
+            self._jarvis_shift = (self._jarvis_shift + geo.TEXTURE_SPEED * gap) % 360.0
+        self._jarvis_last = self._opened_at
+        self._jarvis_mode = "open"
+        self._jarvis_mode_start = self._opened_at + 0.001
+        self._jarvis_opacity = 1.0
+        self._jarvis_ring_scale = 1.0
+        self._jarvis_from = None
+        self._search_frames_alpha = 0.0
+        self._search_frames_hold = False
+        if str(self._config.theme).lower() == "jarvis":
+            # Capture before show(): the overlay is still hidden, so the grab is
+            # the desktop that the glass will sit on.
+            self._jarvis_frost = self._capture_frost()
 
         # Take the capture before painting. Every millisecond between the press
         # and the capture is a millisecond in which the application underneath
@@ -276,6 +328,72 @@ class OverlayWindow(QWidget):
         self.repaint()
         if not self._timer.isActive():
             self._timer.start()
+
+    def _capture_frost(self) -> "QPixmap | None":
+        """Blurred desktop under the wheel, feathered like the plate.
+
+        Returns ``None`` when the grab fails (offscreen platform, locked
+        desktop, wheel partly off screen); the renderer then falls back to the
+        procedural frost texture.
+        """
+        screen = self._screen
+        if screen is None:
+            return None
+        geometry = screen.geometry()
+        dpr = float(screen.devicePixelRatio() or 1.0)
+        # Screen-local position of the wheel centre (window may not start at 0,0
+        # during previews or on secondary monitors).
+        local_x = self._center.x() - geometry.x()
+        local_y = self._center.y() - geometry.y()
+        radius = max(20.0, float(self._config.wheel_radius)) * 2.88 * 1.02
+        side_logical = max(16, int(round(radius * 2.0)))
+        left = int(round(local_x - side_logical / 2.0))
+        top = int(round(local_y - side_logical / 2.0))
+        try:
+            # Grab the plate region at native resolution: the blurred desktop
+            # must stay anchored to its real position, so it may never be
+            # stretched or magnified when the wheel size changes.
+            shot = screen.grabWindow(0, left, top, side_logical, side_logical)
+        except (RuntimeError, TypeError):
+            return None
+        if shot.isNull():
+            return None
+        side = max(16, int(round(side_logical * dpr)))
+        canvas = shot.toImage()
+        if canvas.width() != side or canvas.height() != side:
+            canvas = canvas.scaled(side, side, Qt.IgnoreAspectRatio,
+                                   Qt.SmoothTransformation)
+        small = canvas.scaled(
+            max(8, side // 14), max(8, side // 14),
+            Qt.IgnoreAspectRatio, Qt.SmoothTransformation,
+        )
+        blurred = small.scaled(
+            side, side, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+        )
+        # radial feather, aligned with the plate: opaque to 1.78 R, fade to 2.88 R
+        mask = QImage(side, side, QImage.Format_ARGB32_Premultiplied)
+        mask.fill(Qt.transparent)
+        mask_painter = QPainter(mask)
+        try:
+            gradient = QRadialGradient(QPointF(side / 2.0, side / 2.0), side / 2.0)
+            gradient.setColorAt(0.0, QColor(0, 0, 0, 255))
+            gradient.setColorAt(1.78 / 2.88, QColor(0, 0, 0, 255))
+            gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
+            mask_painter.fillRect(0, 0, side, side, gradient)
+        finally:
+            mask_painter.end()
+        composited = QImage(side, side, QImage.Format_ARGB32_Premultiplied)
+        composited.fill(Qt.transparent)
+        comp = QPainter(composited)
+        try:
+            comp.drawImage(0, 0, blurred)
+            comp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+            comp.drawImage(0, 0, mask)
+        finally:
+            comp.end()
+        result = QPixmap.fromImage(composited)
+        result.setDevicePixelRatio(dpr)
+        return result
 
     def warm_up(self) -> None:
         """Pay the first-gesture costs now, invisibly.
@@ -374,6 +492,7 @@ class OverlayWindow(QWidget):
         self._hover = -1
         self._weights = [0.0] * self._count
         self._release_pointer_capture()
+        self._jarvis_start_cancel(time.perf_counter())
         self.cancelled.emit()
         self._finish_if_idle()
 
@@ -401,6 +520,10 @@ class OverlayWindow(QWidget):
         name = self._sector_name(index)
         centre = QPoint(self._center)
 
+        # Rings first: collapse onto the selected slice, then fade.
+        self._jarvis_start_commit(
+            time.perf_counter(), sector_center_angle(index, self._count)
+        )
         # Drop the burst first so the window stays busy animating it, then clear
         # the wheel state and repaint once so the wheel vanishes immediately.
         self.add_mark(name, centre, index)
@@ -415,6 +538,7 @@ class OverlayWindow(QWidget):
     def _commit_basic_ping(self) -> str:
         """Commit the centre action: a click without dragging."""
         centre = QPoint(self._center)
+        self._jarvis_start_centre(time.perf_counter())
         self.add_mark(_BASIC_PING_NAME, centre, -1)
         self._open = False
         self._hover = -1
@@ -465,6 +589,25 @@ class OverlayWindow(QWidget):
             self._timer.stop()
             return
 
+        self._jarvis_advance(now, dt)
+        self._advance_search_frames(dt)
+        elapsed = now - self._jarvis_mode_start
+        if self._jarvis_mode == "restore" and elapsed >= _JARVIS_RESTORE_TIME:
+            self._jarvis_mode = "open"
+        elif self._jarvis_mode == "commit" and elapsed >= (
+            _JARVIS_COMMIT_TIME + _JARVIS_COMMIT_FADE
+        ):
+            self._jarvis_mode = "idle"
+            self._jarvis.reset()
+        elif self._jarvis_mode == "cancel" and elapsed >= (
+            _JARVIS_CANCEL_RESTORE + _JARVIS_CANCEL_FADE
+        ):
+            self._jarvis_mode = "idle"
+            self._jarvis.reset()
+        elif self._jarvis_mode == "centre" and elapsed >= _JARVIS_CENTRE_TIME:
+            self._jarvis_mode = "idle"
+            self._jarvis.reset()
+
         # Screen hot-plug/resolution changes are cheap to notice here and far
         # more robust than keeping QScreen signal connections alive.
         self._apply_geometry()
@@ -475,6 +618,12 @@ class OverlayWindow(QWidget):
                 self._hover = hover
                 # Sound layer in app.py listens to this; emit only on changes.
                 self.hover_changed.emit(hover)
+                if hover >= 0:
+                    self._jarvis_start_focus(
+                        now, sector_center_angle(hover, self._count)
+                    )
+                elif self._jarvis_mode == "focus":
+                    self._jarvis_start_restore(now)
             # Track how far the pointer ever travelled from the centre: a release
             # near the centre after a real drag is a cancel, a release near the
             # centre without moving is a click and sends the basic ping.
@@ -492,14 +641,16 @@ class OverlayWindow(QWidget):
         if self._marks:
             self._marks = [mark for mark in self._marks if now - mark.start < mark.duration]
 
-        if self._open or self._marks:
+        if (self._open or self._marks or self._jarvis_active()
+                or self._search_frames_alpha > 0.02 or self._search_frames_hold):
             self.update()
         else:
             self._finish_if_idle()
 
     def _finish_if_idle(self) -> None:
         """Stop the timer and hide once neither the wheel nor a mark is left."""
-        if self._open or self._marks:
+        if (self._open or self._marks or self._jarvis_active()
+                or self._search_frames_alpha > 0.02 or self._search_frames_hold):
             return
         self._timer.stop()
         if self.isVisible():
@@ -520,7 +671,12 @@ class OverlayWindow(QWidget):
         self._hover = -1
         self._weights = [0.0] * self._count
         self._marks.clear()
-        self._release_pointer_capture()  # defensive: never leave the mouse captured
+        self._search_frames_hold = False
+        self._search_frames_alpha = 0.0
+        self._release_pointer_capture()
+        callback = getattr(self, "_hidden_callback", None)
+        if callback is not None:
+            callback()  # defensive: never leave the mouse captured
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt name
@@ -551,17 +707,296 @@ class OverlayWindow(QWidget):
             return
         self.deleteLater()
 
+    # ------------------------------------------------------- v0.4 jarvis anim
+    @staticmethod
+    def _jarvis_ease(progress: float) -> float:
+        progress = clamp(progress, 0.0, 1.0)
+        return progress * progress * (3.0 - 2.0 * progress)
+
+    def _jarvis_base_windows(self):
+        return tuple(
+            (rot, rot + span) for rot, span in zip(self._jarvis_rot, _JARVIS_SPANS)
+        )
+
+    def _jarvis_windows(self, now: float):
+        """Current (start, span) for the three rings and the fade/scale factors."""
+        mode = self._jarvis_mode
+        base = self._jarvis_base_windows()
+        if mode in ("idle", "open"):
+            return base, 1.0, 1.0
+        elapsed = max(0.0, now - self._jarvis_mode_start)
+        if mode == "focus":
+            p = self._jarvis_ease(elapsed / _JARVIS_FOCUS_TIME)
+            target = tuple(
+                (
+                    self._jarvis_focus_angle - _JARVIS_FOCUS_SPAN / 2.0,
+                    self._jarvis_focus_angle + _JARVIS_FOCUS_SPAN / 2.0,
+                )
+                for _ in range(3)
+            )
+            return self._jarvis_lerp(self._jarvis_from or base, target, p), 1.0, 1.0
+        if mode == "restore":
+            p = self._jarvis_ease(elapsed / _JARVIS_RESTORE_TIME)
+            return self._jarvis_lerp(self._jarvis_from or base, base, p), 1.0, 1.0
+        if mode == "commit":
+            p = self._jarvis_ease(elapsed / _JARVIS_COMMIT_TIME)
+            target = tuple(
+                (
+                    self._jarvis_focus_angle - _JARVIS_COMMIT_SPAN / 2.0,
+                    self._jarvis_focus_angle + _JARVIS_COMMIT_SPAN / 2.0,
+                )
+                for _ in range(3)
+            )
+            windows = self._jarvis_lerp(self._jarvis_from or target, target, p)
+            fade = clamp((elapsed - _JARVIS_COMMIT_TIME) / _JARVIS_COMMIT_FADE, 0.0, 1.0)
+            return windows, 1.0 - fade, 1.0
+        if mode == "cancel":
+            p = self._jarvis_ease(elapsed / _JARVIS_CANCEL_RESTORE)
+            windows = self._jarvis_lerp(self._jarvis_from or base, base, p)
+            fade = clamp(
+                (elapsed - _JARVIS_CANCEL_RESTORE) / _JARVIS_CANCEL_FADE, 0.0, 1.0
+            )
+            return windows, 1.0 - fade, 1.0
+        if mode == "centre":
+            p = self._jarvis_ease(elapsed / _JARVIS_CENTRE_TIME)
+            return base, 1.0 - p, max(0.0, 1.0 - p)
+        if mode == "done":
+            return base, 0.0, 0.0
+        return base, 1.0, 1.0
+
+    @staticmethod
+    def _jarvis_lerp(from_windows, to_windows, progress: float):
+        out = []
+        for (start_a, end_a), (start_b, end_b) in zip(from_windows, to_windows):
+            span_a = end_a - start_a
+            span_b = end_b - start_b
+            centre_a = start_a + span_a / 2.0
+            centre_b = start_b + span_b / 2.0
+            delta = ((centre_b - centre_a + 180.0) % 360.0) - 180.0
+            centre = centre_a + delta * progress
+            span = span_a + (span_b - span_a) * progress
+            out.append((centre - span / 2.0, centre + span / 2.0))
+        return tuple(out)
+
+    def _jarvis_start_focus(self, now: float, angle: float) -> None:
+        current, _opacity, _scale = self._jarvis_windows(now)
+        self._jarvis_from = current
+        self._jarvis_focus_angle = angle % 360.0
+        self._jarvis_mode = "focus"
+        self._jarvis_mode_start = now
+
+    def _jarvis_start_restore(self, now: float) -> None:
+        self._jarvis_from, _o, _s = self._jarvis_windows(now)
+        self._jarvis_mode = "restore"
+        self._jarvis_mode_start = now
+
+    def _jarvis_start_commit(self, now: float, angle: float) -> None:
+        self._jarvis_from, _o, _s = self._jarvis_windows(now)
+        self._jarvis_focus_angle = angle % 360.0
+        self._jarvis_mode = "commit"
+        self._jarvis_mode_start = now
+
+    def _jarvis_start_cancel(self, now: float) -> None:
+        self._jarvis_from, _o, _s = self._jarvis_windows(now)
+        self._jarvis_mode = "cancel"
+        self._jarvis_mode_start = now
+
+    def _jarvis_start_centre(self, now: float) -> None:
+        self._jarvis_from, _o, _s = self._jarvis_windows(now)
+        self._jarvis_mode = "centre"
+        self._jarvis_mode_start = now
+
+    def _jarvis_active(self) -> bool:
+        return self._jarvis_mode in (
+            "focus", "restore", "commit", "cancel", "centre",
+        )
+
+    # ------------------------------------------------- search frames
+    def _search_sector_active(self) -> bool:
+        """True while the hovered slice is the injected search action."""
+        if not bool(getattr(self._config, "dsh_mode", False)):
+            return False
+        if not (0 <= self._hover < self._count):
+            return False
+        return actions.sector_action(self._sector_name(self._hover)) == actions.OPEN_SEARCH
+
+    def _advance_search_frames(self, dt: float) -> None:
+        target = 1.0 if (self._search_frames_hold or self._search_sector_active()) else 0.0
+        alpha = self._search_frames_alpha
+        if target > alpha:
+            alpha = min(target, alpha + dt / _SEARCH_FADE_IN)
+        else:
+            alpha = max(target, alpha - dt / _SEARCH_FADE_OUT)
+        self._search_frames_alpha = alpha
+
+    def begin_search_frames(self) -> None:
+        """Keep the frames up across the capture/OCR phase."""
+        self._search_frames_hold = True
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+        if not self._timer.isActive():
+            self._last_tick = time.perf_counter()
+            self._timer.start()
+        self.update()
+
+    def end_search_frames(self) -> None:
+        """Let the frames fade out; the window hides itself afterwards."""
+        self._search_frames_hold = False
+        self.update()
+
+    def _paint_search_frames(self, painter: QPainter, now: float) -> None:
+        alpha = self._search_frames_alpha
+        if alpha <= 0.01:
+            return
+        centre = self.mapFromGlobal(self._center)
+        cx, cy = float(centre.x()), float(centre.y())
+        capture_w, capture_h = _SEARCH_CAPTURE
+        decide_w, decide_h = _SEARCH_DECIDE
+        amber = QColor(255, 190, 96)
+        white = QColor(232, 236, 244)
+        painter.save()
+        try:
+            painter.setOpacity(alpha)
+            painter.setBrush(Qt.NoBrush)
+            outer = QRectF(cx - capture_w / 2.0, cy - capture_h / 2.0, capture_w, capture_h)
+            inner = QRectF(cx - decide_w / 2.0, cy - decide_h / 2.0, decide_w, decide_h)
+            painter.setPen(QPen(QColor(228, 234, 242, 200), 1.0))
+            painter.drawRect(outer)
+            painter.setPen(QPen(QColor(255, 214, 145, 235), 1.0))
+            painter.drawRect(inner)
+            # corner brackets on the capture frame
+            painter.setPen(QPen(amber, 2.0))
+            length = 24.0
+            for sx, sy in ((outer.left(), outer.top()), (outer.right(), outer.top()),
+                           (outer.left(), outer.bottom()), (outer.right(), outer.bottom())):
+                dx = 1.0 if sx == outer.left() else -1.0
+                dy = 1.0 if sy == outer.top() else -1.0
+                painter.drawLine(QPointF(sx, sy), QPointF(sx + dx * length, sy))
+                painter.drawLine(QPointF(sx, sy), QPointF(sx, sy + dy * length))
+            # inner brackets
+            painter.setPen(QPen(QColor(255, 232, 185, 235), 1.0))
+            short = 12.0
+            for sx, sy in ((inner.left(), inner.top()), (inner.right(), inner.top()),
+                           (inner.left(), inner.bottom()), (inner.right(), inner.bottom())):
+                dx = 1.0 if sx == inner.left() else -1.0
+                dy = 1.0 if sy == inner.top() else -1.0
+                painter.drawLine(QPointF(sx, sy), QPointF(sx + dx * short, sy))
+                painter.drawLine(QPointF(sx, sy), QPointF(sx, sy + dy * short))
+            # crosshair
+            painter.setPen(QPen(white, 1.0))
+            painter.drawLine(QPointF(cx - 12, cy), QPointF(cx + 12, cy))
+            painter.drawLine(QPointF(cx, cy - 12), QPointF(cx, cy + 12))
+            # labels
+            painter.setFont(QFont("Consolas", 10, QFont.Bold))
+            painter.setPen(QColor(232, 236, 244, 235))
+            painter.drawText(QPointF(outer.left() + 8, outer.top() - 8),
+                             "CAPTURE  640 x 360")
+            painter.setFont(QFont("Consolas", 8, QFont.Bold))
+            painter.setPen(QColor(255, 214, 145, 255))
+            painter.drawText(QPointF(inner.left() + 6, inner.top() - 6),
+                             "DECIDE  320 x 180  ·  OCR")
+            painter.setFont(QFont("Consolas", 9, QFont.Bold))
+            painter.setPen(QColor(255, 210, 140, 230))
+            painter.drawText(QPointF(cx - 78, outer.bottom() + 24),
+                             "ON MY WAY  ·  RELEASE TO CAPTURE")
+        finally:
+            painter.restore()
+
+    def _paint_dimmed_wheel(self, painter: QPainter, now: float, dim: float) -> None:
+        """Render the whole wheel to an image, then paint it at ``dim`` opacity."""
+        dpr = self._device_pixel_ratio()
+        image = QImage(
+            max(1, int(self.width() * dpr)),
+            max(1, int(self.height() * dpr)),
+            QImage.Format_ARGB32_Premultiplied,
+        )
+        image.fill(Qt.transparent)
+        image.setDevicePixelRatio(dpr)
+        off = QPainter(image)
+        try:
+            off.setRenderHint(QPainter.Antialiasing, True)
+            off.setRenderHint(QPainter.TextAntialiasing, True)
+            self._paint_wheel(off, now)
+        finally:
+            off.end()
+        painter.setOpacity(max(0.0, min(1.0, dim)))
+        painter.drawImage(0, 0, image)
+        painter.setOpacity(1.0)
+
+    def _jarvis_paint(
+        self, painter, now: float, cx: float, cy: float, radius: float, ease: float,
+    ) -> None:
+        windows, opacity, ring_scale = self._jarvis_windows(now)
+        telemetry = self._telemetry_values(windows)
+        self._jarvis.draw(
+            painter,
+            cx,
+            cy,
+            radius * max(0.0, ring_scale),
+            elapsed=now - self._jarvis_born,
+            ease=ease,
+            backdrop=max(0.0, min(1.0, float(self._config.jarvis_backdrop) / 100.0)),
+            frost=self._jarvis_frost,
+            windows=windows,
+            data_shift=self._jarvis_shift,
+            opacity=opacity,
+            telemetry=telemetry,
+        )
+
+    def _telemetry_values(self, windows) -> dict:
+        """The ten cells of the telemetry band (all sizes scale with the wheel)."""
+        aperture = windows[1][1] - windows[1][0]
+        sector = self._sector_name(self._hover) if 0 <= self._hover < self._count else "--"
+        observed = self._jarvis.observed_count()
+        shift = int(self._jarvis_shift) % 360
+        clock = time.strftime("%H:%M:%S")
+        cells = [
+            ("APERTURE", f"{aperture:.0f}", (230, 190, 120), aperture / 180.0),
+            ("SECTOR", sector[:13].upper(), (255, 200, 120), None),
+            ("GEO", "114.16/22.30", (170, 178, 190), None),
+            ("WEATHER", "26.4C 117", (170, 178, 190), None),
+            ("OBSERVED", f"{observed}/16", (170, 178, 190), observed / 16.0),
+            ("CLOCK", clock, (140, 146, 158), None),
+            ("SPAN", "150/90/90", (140, 146, 158), None),
+            ("DRIFT", f"{shift}", (140, 146, 158), shift / 360.0),
+            ("DANGER", "ARMED", (255, 120, 100), None),
+            ("PING", "READY", (140, 146, 158), None),
+        ]
+        return {"cells": cells}
+
+    def _jarvis_advance(self, now: float, dt: float) -> None:
+        """Movement clock: turns while idle, pauses during the drag shrink."""
+        if self._jarvis_mode in ("open", "restore", "commit", "cancel"):
+            self._jarvis_rot = [
+                (rot + speed * dt) % 360.0
+                for rot, speed in zip(self._jarvis_rot, _JARVIS_SPEEDS)
+            ]
+            self._jarvis_shift = (self._jarvis_shift + geo.TEXTURE_SPEED * dt) % 360.0
+        if self._jarvis_mode == "done":
+            self._jarvis_mode = "idle"
+        self._jarvis_last = now
+
     # ------------------------------------------------------------------ helpers
+    def _sector_available(self, index: int) -> bool:
+        """In DSH mode, only slices with an injected action are selectable."""
+        if not bool(getattr(self._config, "dsh_mode", False)):
+            return True
+        return actions.sector_action(self._sector_name(index)) is not None
+
     def _hovered_sector(self) -> int:
         """Hit-test the global cursor against the wheel using ``geometry``."""
         cursor = QCursor.pos()
         dx = float(cursor.x() - self._center.x())
         dy = float(cursor.y() - self._center.y())
         try:
-            return sector_index(dx, dy, float(self._config.dead_zone), self._count)
+            index = sector_index(dx, dy, float(self._config.dead_zone), self._count)
         except ValueError:  # pragma: no cover - config is clamped by config.py
             log.debug("invalid sector maths input; treating the cursor as dead centre")
             return -1
+        if index >= 0 and not self._sector_available(index):
+            return -1
+        return index
 
     def _sector_name(self, index: int) -> str:
         sectors = self._config.sectors
@@ -681,192 +1116,6 @@ class OverlayWindow(QWidget):
         )
 
     # ------------------------------------------------------------- lol skin
-    def _paint_lol_wheel(
-        self,
-        painter: QPainter,
-        now: float,
-        cx: float,
-        cy: float,
-        base_radius: float,
-        ease: float,
-    ) -> None:
-        """League-inspired skin: light beams, gold separators and a medallion.
-
-        Deliberately asset-free: every shape is drawn, so switching to this theme
-        never depends on files that the repository must not contain. Slice names
-        are not painted here - in this skin the meaning is carried by the icons
-        and the centre medallion, which is also how the reference layout works.
-        """
-        config = self._config
-        count = self._count
-        weights = self._weights
-        accent = self._accent()
-        scale = _OPEN_START_SCALE + (1.0 - _OPEN_START_SCALE) * ease
-        radius = base_radius * scale
-        medallion = radius * _LOL_MEDALLION_FACTOR
-        beam_reach = radius * _LOL_BEAM_REACH
-
-        # 1) Radial light beams. Additive blending makes them read as light
-        #    spilling over the desktop instead of as opaque wedges.
-        painter.save()
-        try:
-            painter.setCompositionMode(QPainter.CompositionMode_Plus)
-            painter.setPen(Qt.NoPen)
-            for index in range(count):
-                weight = weights[index]
-                gradient = QRadialGradient(QPointF(cx, cy), beam_reach)
-                inner = QColor(accent)
-                inner.setAlpha(
-                    int(round((_LOL_BEAM_IDLE + _LOL_BEAM_HOVER * weight) * ease))
-                )
-                middle = QColor(accent)
-                middle.setAlpha(
-                    int(round((_LOL_BEAM_IDLE * 0.45 + _LOL_BEAM_HOVER * 0.5 * weight) * ease))
-                )
-                outer = QColor(accent)
-                outer.setAlpha(0)
-                gradient.setColorAt(0.0, middle)
-                gradient.setColorAt(0.55, inner)
-                gradient.setColorAt(0.82, middle)
-                gradient.setColorAt(1.0, outer)
-                painter.setBrush(gradient)
-                start16, span16 = self._sector_arc(index)
-                painter.drawPie(self._pie_rect(cx, cy, beam_reach), start16, span16)
-        finally:
-            painter.restore()
-
-        # 2) Faint surface so the wheel reads as a disc without hiding the screen.
-        disc = QColor(12, 20, 19)
-        disc.setAlpha(int(round(_LOL_DISC_ALPHA * ease)))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(disc)
-        painter.drawEllipse(QPointF(cx, cy), radius, radius)
-
-        # 3) Gold separators on the slice boundaries.
-        separator = QColor(*_LOL_GOLD)
-        separator.setAlpha(int(round(_LOL_LINE_ALPHA * ease)))
-        painter.setPen(QPen(separator, 1.0))
-        painter.setBrush(Qt.NoBrush)
-        for index in range(count):
-            angle = math.radians(sector_center_angle(index, count) + 180.0 / count)
-            painter.drawLine(
-                QPointF(cx + medallion * math.cos(angle), cy + medallion * math.sin(angle)),
-                QPointF(cx + radius * math.cos(angle), cy + radius * math.sin(angle)),
-            )
-
-        # 4) Outer rim and medallion rim.
-        rim = QColor(*_LOL_GOLD)
-        rim.setAlpha(int(round(_LOL_RING_ALPHA * ease)))
-        painter.setPen(QPen(rim, 1.4))
-        painter.drawEllipse(QPointF(cx, cy), radius, radius)
-        rim.setAlpha(min(255, int(round(_LOL_RING_ALPHA * 1.5 * ease))))
-        painter.setPen(QPen(rim, 2.0))
-        painter.drawEllipse(QPointF(cx, cy), medallion, medallion)
-
-        # 5) Icons on the 0.65 R circle.
-        if config.show_icons:
-            for index in range(count):
-                weight = weights[index]
-                size = float(config.icon_size) * (1.0 + _ICON_HOVER_GROWTH * weight) * ease
-                if size < 1.0:
-                    continue
-                angle = math.radians(sector_center_angle(index, count))
-                icon_radius = radius * _LOL_ICON_FACTOR
-                if weight > 0.5:
-                    colour = QColor(accent)
-                    colour.setAlpha(int(round(255 * ease)))
-                else:
-                    colour = QColor(*_LOL_ICON_COLOUR)
-                    colour.setAlpha(int(round(235 * ease)))
-                self._draw_slice_icon(
-                    painter,
-                    index,
-                    cx + icon_radius * math.cos(angle),
-                    cy + icon_radius * math.sin(angle),
-                    size,
-                    colour,
-                    ease,
-                )
-
-        # 6) Medallion body: radial gradient + inner gold ring.
-        body = QRadialGradient(QPointF(cx, cy - medallion * 0.25), medallion * 1.3)
-        body.setColorAt(0.0, QColor(34, 64, 60, int(round(245 * ease))))
-        body.setColorAt(0.55, QColor(18, 38, 35, int(round(245 * ease))))
-        body.setColorAt(1.0, QColor(9, 20, 19, int(round(250 * ease))))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(body)
-        painter.drawEllipse(QPointF(cx, cy), medallion * 0.92, medallion * 0.92)
-        inner_ring = QColor(*_LOL_GOLD)
-        inner_ring.setAlpha(min(255, int(round(_LOL_RING_ALPHA * 1.8 * ease))))
-        painter.setPen(QPen(inner_ring, 1.2))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawEllipse(QPointF(cx, cy), medallion * 0.92, medallion * 0.92)
-
-        # 7) Top badge: a blue diamond, drawn (not an asset).
-        diamond_y = cy - medallion * 0.44
-        half_w = medallion * 0.11
-        half_h = medallion * 0.15
-        diamond = QPolygonF(
-            [
-                QPointF(cx, diamond_y - half_h),
-                QPointF(cx + half_w, diamond_y),
-                QPointF(cx, diamond_y + half_h),
-                QPointF(cx - half_w, diamond_y),
-            ]
-        )
-        painter.setPen(QPen(QColor(170, 235, 248, int(round(210 * ease))), 1.0))
-        painter.setBrush(QColor(92, 190, 222, int(round(240 * ease))))
-        painter.drawPolygon(diamond)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(186, 240, 250, int(round(110 * ease))))
-        painter.drawPolygon(
-            QPolygonF(
-                [
-                    QPointF(cx, diamond_y - half_h),
-                    QPointF(cx + half_w, diamond_y),
-                    QPointF(cx, diamond_y),
-                ]
-            )
-        )
-
-        # 8) Centre text: PING, then a BACK hint with a small mouse glyph.
-        painter.setPen(QColor(122, 205, 228, int(round(245 * ease))))
-        ping_font = QFont("Arial", max(6, int(round(medallion * 0.23))), QFont.Bold)
-        painter.setFont(ping_font)
-        metrics = painter.fontMetrics()
-        painter.drawText(
-            QPointF(
-                cx - metrics.horizontalAdvance("PING") / 2.0,
-                cy + medallion * 0.12,
-            ),
-            "PING",
-        )
-
-        back_font = QFont("Arial", max(5, int(round(medallion * 0.13))), QFont.Normal)
-        painter.setFont(back_font)
-        back_metrics = painter.fontMetrics()
-        back_y = cy + medallion * 0.58
-        back_width = back_metrics.horizontalAdvance("BACK")
-        glyph_w = medallion * 0.09
-        glyph_h = medallion * 0.14
-        glyph_left = cx - (glyph_w + back_width + medallion * 0.06) / 2.0
-        painter.setPen(QPen(QColor(170, 174, 168, int(round(200 * ease))), 1.0))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRoundedRect(
-            QRectF(glyph_left, back_y - glyph_h * 0.72, glyph_w, glyph_h),
-            glyph_w * 0.45,
-            glyph_w * 0.45,
-        )
-        painter.drawLine(
-            QPointF(glyph_left + glyph_w / 2.0, back_y - glyph_h * 0.72),
-            QPointF(glyph_left + glyph_w / 2.0, back_y - glyph_h * 0.32),
-        )
-        painter.setPen(QColor(170, 174, 168, int(round(200 * ease))))
-        painter.drawText(
-            QPointF(glyph_left + glyph_w + medallion * 0.06, back_y), "BACK"
-        )
-
-    # ------------------------------------------------------------------- paint
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt name
         painter = QPainter(self)
         try:
@@ -879,8 +1128,25 @@ class OverlayWindow(QWidget):
             painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
 
             now = time.perf_counter()
+            frames = self._search_frames_alpha
             if self._open:
-                self._paint_wheel(painter, now)
+                if frames > 0.01:
+                    dim = 1.0 - (1.0 - _SEARCH_DIM) * frames
+                    self._paint_dimmed_wheel(painter, now, dim)
+                else:
+                    self._paint_wheel(painter, now)
+            elif self._jarvis_active():
+                centre = self.mapFromGlobal(self._center)
+                self._jarvis_paint(
+                    painter,
+                    now,
+                    float(centre.x()),
+                    float(centre.y()),
+                    max(20.0, float(self._config.wheel_radius)),
+                    1.0,
+                )
+            if frames > 0.01:
+                self._paint_search_frames(painter, now)
             if self._marks:
                 for mark in self._marks:
                     self._paint_mark(painter, mark, now)
@@ -889,17 +1155,6 @@ class OverlayWindow(QWidget):
 
     def _paint_wheel(self, painter: QPainter, now: float) -> None:
         config = self._config
-        if str(config.theme).lower() == "lol":
-            centre = self.mapFromGlobal(self._center)
-            self._paint_lol_wheel(
-                painter,
-                now,
-                float(centre.x()),
-                float(centre.y()),
-                max(20.0, float(config.wheel_radius)),
-                self._open_ease(now),
-            )
-            return
         count = self._count
         centre = self.mapFromGlobal(self._center)
         cx = float(centre.x())
@@ -907,7 +1162,10 @@ class OverlayWindow(QWidget):
         ease = self._open_ease(now)
         base_radius = max(20.0, float(config.wheel_radius))
         accent = self._accent()
-        gray = (60.0, 60.0, 60.0)
+        jarvis = str(config.theme).lower() == "jarvis"
+        if jarvis:
+            self._jarvis_paint(painter, now, cx, cy, base_radius, ease)
+        gray = (40.0, 30.0, 18.0) if jarvis else (60.0, 60.0, 60.0)
         weights = self._weights
         # Open animation: grow from 70 % to 100 % of the radius and fade in.
         radius_scale = _OPEN_START_SCALE + (1.0 - _OPEN_START_SCALE) * ease
@@ -925,7 +1183,8 @@ class OverlayWindow(QWidget):
             radius = radii[index] + _GLOW_WIDTH
             start16, span16 = self._sector_arc(index)
             glow = QColor(accent)
-            glow.setAlpha(int(round(90 * weight * ease)))
+            dim = 1.0 if self._sector_available(index) else 0.28
+            glow.setAlpha(int(round(90 * weight * ease * dim)))
             painter.setBrush(glow)
             painter.drawPie(self._pie_rect(cx, cy, radius), start16, span16)
 
@@ -940,10 +1199,11 @@ class OverlayWindow(QWidget):
                 int(round(gray[1] + (accent.green() - gray[1]) * weight)),
                 int(round(gray[2] + (accent.blue() - gray[2]) * weight)),
             )
-            fill.setAlpha(int(round((110 + (240 - 110) * weight) * ease)))
+            dim = 1.0 if self._sector_available(index) else 0.28
+            fill.setAlpha(int(round((110 + (240 - 110) * weight) * ease * dim)))
 
             pen_colour = QColor(255, 255, 255)
-            pen_colour.setAlpha(int(round((80 + (255 - 80) * weight) * ease)))
+            pen_colour.setAlpha(int(round((80 + (255 - 80) * weight) * ease * dim)))
 
             painter.setBrush(fill)
             painter.setPen(QPen(pen_colour, 1.0 + 2.0 * weight))
@@ -961,12 +1221,13 @@ class OverlayWindow(QWidget):
                 icon_radius = radii[index] * _ICON_RADIUS_FACTOR
                 icon_x = cx + icon_radius * math.cos(angle)
                 icon_y = cy + icon_radius * math.sin(angle)
+                dim = 1.0 if self._sector_available(index) else 0.28
                 if weight > 0.5:
                     colour = QColor(accent)
-                    colour.setAlpha(int(round(255 * ease)))
+                    colour.setAlpha(int(round(255 * ease * dim)))
                 else:
                     colour = QColor(*_ICON_IDLE_COLOUR)
-                    colour.setAlpha(int(round(_ICON_IDLE_ALPHA * ease)))
+                    colour.setAlpha(int(round(_ICON_IDLE_ALPHA * ease * dim)))
                 self._draw_slice_icon(painter, index, icon_x, icon_y, size, colour, ease)
 
         # 4) Sector labels, pushed outwards when the icons claim the inner ring.
@@ -980,8 +1241,9 @@ class OverlayWindow(QWidget):
                     cx, cy, index, radii[index] * label_factor, count
                 )
                 colour = QColor(255, 255, 255)
+                dim = 1.0 if self._sector_available(index) else 0.28
                 colour.setAlpha(
-                    int(round((255 if index == self._hover else 190) * ease))
+                    int(round((255 if index == self._hover else 190) * ease * dim))
                 )
                 max_width = max(28.0, radii[index] * 0.60)
                 self._draw_centred_text(
@@ -997,7 +1259,9 @@ class OverlayWindow(QWidget):
         # 5) Dark centre disc with the current sector name. It fades to 25 % of
         #    its alpha instead of zero so the wheel never blinks out completely.
         disc = max(0.25, ease)
-        painter.setBrush(QColor(30, 30, 30, int(round(230 * disc))))
+        disc_colour = QColor(9, 6, 3) if jarvis else QColor(30, 30, 30)
+        painter.setBrush(QColor(disc_colour.red(), disc_colour.green(),
+                                disc_colour.blue(), int(round(230 * disc))))
         painter.setPen(QPen(QColor(255, 255, 255, int(round(255 * disc))), 2.0))
         painter.drawEllipse(QPointF(cx, cy), _CENTRE_RADIUS, _CENTRE_RADIUS)
 
@@ -1131,6 +1395,9 @@ class OverlayManager(QObject):
 
     committed = pyqtSignal(str, object)  # (sector name, global QPoint centre)
     hover_changed = pyqtSignal(int)  # hovered slice index of the active wheel
+    #: Emitted once when a wheel appears (True) and once when the last
+    #: animation has ended and its window hid (False). No polling needed.
+    wheel_active_changed = pyqtSignal(bool)
 
     def __init__(self, config: Config, parent: QObject | None = None) -> None:
         # app.py passes its controller (a plain object) as parent in one place;
@@ -1158,6 +1425,67 @@ class OverlayManager(QObject):
                 log.debug("cannot connect to QGuiApplication screen signals", exc_info=True)
 
     # ------------------------------------------------------------------ public
+    def _capture_frost(self) -> "QPixmap | None":
+        """Blurred desktop under the wheel, feathered like the plate.
+
+        Returns ``None`` when the grab fails (offscreen platform, locked
+        desktop, wheel partly off screen); the renderer then falls back to the
+        procedural frost texture.
+        """
+        screen = self._screen
+        if screen is None:
+            return None
+        try:
+            shot = screen.grabWindow(0)
+        except (RuntimeError, TypeError):
+            return None
+        if shot.isNull():
+            return None
+        dpr = float(shot.devicePixelRatio() or 1.0)
+        local = self.mapFromGlobal(self._center)
+        radius = max(20.0, float(self._config.wheel_radius)) * 2.88 * 1.02
+        side = max(16, int(round(radius * 2.0 * dpr)))
+        left = int(round(local.x() * dpr - side / 2.0))
+        top = int(round(local.y() * dpr - side / 2.0))
+        canvas = QImage(side, side, QImage.Format_ARGB32_Premultiplied)
+        canvas.fill(QColor(0, 0, 0))
+        painter = QPainter(canvas)
+        try:
+            painter.drawPixmap(-left, -top, shot)
+        finally:
+            painter.end()
+        small = canvas.scaled(
+            max(8, side // 14), max(8, side // 14),
+            Qt.IgnoreAspectRatio, Qt.SmoothTransformation,
+        )
+        blurred = small.scaled(
+            side, side, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+        )
+        # radial feather, aligned with the plate: opaque to 1.78 R, fade to 2.88 R
+        mask = QImage(side, side, QImage.Format_ARGB32_Premultiplied)
+        mask.fill(Qt.transparent)
+        mask_painter = QPainter(mask)
+        try:
+            gradient = QRadialGradient(QPointF(side / 2.0, side / 2.0), side / 2.0)
+            gradient.setColorAt(0.0, QColor(0, 0, 0, 255))
+            gradient.setColorAt(1.78 / 2.88, QColor(0, 0, 0, 255))
+            gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
+            mask_painter.fillRect(0, 0, side, side, gradient)
+        finally:
+            mask_painter.end()
+        composited = QImage(side, side, QImage.Format_ARGB32_Premultiplied)
+        composited.fill(Qt.transparent)
+        comp = QPainter(composited)
+        try:
+            comp.drawImage(0, 0, blurred)
+            comp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+            comp.drawImage(0, 0, mask)
+        finally:
+            comp.end()
+        result = QPixmap.fromImage(composited)
+        result.setDevicePixelRatio(dpr)
+        return result
+
     def warm_up(self) -> None:
         """Create and pre-paint one window per screen.
 
@@ -1172,6 +1500,52 @@ class OverlayManager(QObject):
                 self._window_for(screen).warm_up()
             except Exception:  # pragma: no cover - a broken screen must not stop start-up
                 log.debug("warm-up failed for screen %r", screen, exc_info=True)
+
+    def _notify_hidden(self) -> None:
+        self.wheel_active_changed.emit(False)
+
+    def busy(self) -> bool:
+        """True while any overlay window is showing the wheel or its afterglow."""
+        for window in self._windows.values():
+            try:
+                if (
+                    window.isVisible()
+                    or window._open
+                    or bool(window._marks)
+                    or window._search_frames_hold
+                    or window._search_frames_alpha > 0.02
+                    or window._jarvis_active()
+                ):
+                    return True
+            except RuntimeError:  # pragma: no cover - window died with its screen
+                continue
+        return False
+
+    def hold_search_frames(self, global_pos: QPoint) -> None:
+        """Keep the capture frames visible while the app grabs the screen."""
+        screen = self._screen_at(QPoint(global_pos))
+        if screen is None:
+            return
+        try:
+            self._window_for(screen).begin_search_frames()
+        except RuntimeError:  # pragma: no cover - window died with its screen
+            log.debug("cannot hold search frames", exc_info=True)
+
+    def end_search_frames(self) -> None:
+        for window in list(self._windows.values()):
+            try:
+                window.end_search_frames()
+            except RuntimeError:  # pragma: no cover
+                pass
+
+    def hide_all(self) -> None:
+        """Hide every overlay window at once (used before a region capture)."""
+        for window in list(self._windows.values()):
+            try:
+                window.hide()
+            except RuntimeError:  # pragma: no cover - window died with its screen
+                pass
+        self._active = None
 
     def set_config(self, config: Config) -> None:
         """Store the config and let every live window pick it up immediately."""
@@ -1207,6 +1581,7 @@ class OverlayManager(QObject):
         self._centres[window] = position
         self._active = window
         window.begin(position)
+        self.wheel_active_changed.emit(True)
 
     def cancel(self) -> None:
         """Close whichever wheel is open, without emitting ``committed``."""
@@ -1322,6 +1697,7 @@ class OverlayManager(QObject):
                 return other
 
         window = OverlayWindow(screen, self._config)
+        window._hidden_callback = self._notify_hidden
         window.committed.connect(partial(self._relay_committed, window))
         window.cancelled.connect(self._clear_active)
         window.hover_changed.connect(partial(self._relay_hover, window))

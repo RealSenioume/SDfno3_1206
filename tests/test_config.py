@@ -182,9 +182,15 @@ class TestFromDict(unittest.TestCase):
         self.assertEqual(config.sectors[0], "Valid")
         self.assertTrue(all(name.strip() for name in config.sectors))
 
+    def test_jarvis_backdrop_is_clamped(self) -> None:
+        self.assertEqual(Config.from_dict({}).jarvis_backdrop, 50)
+        self.assertEqual(Config.from_dict({"jarvis_backdrop": 150}).jarvis_backdrop, 100)
+        self.assertEqual(Config.from_dict({"jarvis_backdrop": -5}).jarvis_backdrop, 0)
+        self.assertEqual(Config.from_dict({"jarvis_backdrop": "x"}).jarvis_backdrop, 50)
+
     def test_theme_and_pause_hotkey_fallbacks(self) -> None:
         config = Config.from_dict({"theme": "neon", "toggle_hotkey": "nothing"})
-        self.assertEqual(config.theme, "gold")
+        self.assertEqual(config.theme, "jarvis")
         self.assertEqual(config.toggle_hotkey, "ctrl+shift+q")
 
     def test_pause_hotkey_is_normalised(self) -> None:
@@ -206,7 +212,7 @@ class TestPersistence(unittest.TestCase):
 
     def test_save_then_load(self) -> None:
         target = self.root / "nested" / "config.json"
-        config = Config(wheel_radius=180, sectors=["A"] * 8, theme="blue")
+        config = Config(wheel_radius=180, sectors=["A"] * 8)
         written = config.save(target)
         self.assertEqual(written, target)
         self.assertTrue(target.exists())
@@ -236,7 +242,7 @@ class TestPersistence(unittest.TestCase):
         target.write_text(json.dumps({"wheel_radius": 200}), encoding="utf-8")
         config = Config.load(target)
         self.assertEqual(config.wheel_radius, 200)
-        self.assertEqual(config.theme, "gold")
+        self.assertEqual(config.theme, "jarvis")
 
     def test_unreadable_file_falls_back_to_defaults(self) -> None:
         target = self.root / "config.json"

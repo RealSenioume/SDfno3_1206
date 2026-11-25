@@ -1,0 +1,24 @@
+{
+  "name": "lolping-intents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH bundle that lets the agent read LoLPing ping intents and region screenshots.",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

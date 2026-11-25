@@ -56,7 +56,8 @@ class TestSettingsActivation(unittest.TestCase):
 
         controller = self.controller
 
-        def fake_edit(config, parent=None, pause_state_getter=None, pause_toggled=None):
+        def fake_edit(config, parent=None, pause_state_getter=None, pause_toggled=None,
+                      on_apply=None, wheel_activity=None):
             self.opened.append(1)
             # Simulate a queued second activation arriving while the first modal
             # dialog is still open: the guard must swallow it.

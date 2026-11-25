@@ -199,7 +199,7 @@ class TestDocsMatchTheCode(unittest.TestCase):
                 self.assertIn("`danger`", line)
                 self.assertNotIn("`retreat`", line)
             elif line.startswith("| `theme`"):
-                self.assertIn("lol", line)
+                self.assertIn("jarvis", line)
 
 
 if __name__ == "__main__":

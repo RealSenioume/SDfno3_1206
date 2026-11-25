@@ -1,4 +1,4 @@
-# 5. User manual — lolping v0.3.4
+# 5. User manual — lolping v0.4.0
 
 ## 5.1 What lolping is
 
@@ -256,7 +256,7 @@ listed in section 5.10, and it stays on your machine.
 
 - Exclusive-fullscreen applications and elevated windows can prevent the
   overlay from appearing (see Troubleshooting).
-- lolping has eight fixed sectors in v0.3.4.
+- lolping has eight fixed sectors in v0.4.0.
 - Sound cues cannot overlap: a new cue stops the previous one (see section 5.8).
 - The mouse button is seen by the window underneath before the wheel can appear,
   because a program cannot withhold input without a native hook. lolping installs

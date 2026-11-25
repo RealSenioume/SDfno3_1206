@@ -110,7 +110,7 @@ a = Analysis(
     [str(_entry_script)],
     pathex=[str(SRC)],
     binaries=[],
-    datas=[],
+    datas=[(str(ROOT / "assets" / "jarvis"), "assets/jarvis")],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

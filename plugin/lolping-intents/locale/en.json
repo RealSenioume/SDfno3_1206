@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "LoLPing intents",
+    "description": "Read LoLPing ping intents and captured region screenshots, so the agent can act on Enemy Missing / On My Way."
+  }
+}

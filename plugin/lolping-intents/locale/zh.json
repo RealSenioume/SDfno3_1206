@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "LoLPing 意图",
+    "description": "读取 LoLPing 的 ping 意图与区域截图，让 agent 能处理 Enemy Missing / On My Way。"
+  }
+}

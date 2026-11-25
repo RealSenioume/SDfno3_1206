@@ -1,0 +1,5 @@
+- insert:
+    - id: lolping-intents
+      name: lolping-intents
+      config:
+        watch: true

@@ -15,8 +15,10 @@ import logging
 from dataclasses import replace
 from typing import Callable
 
+import time
+
 from PyQt5.QtCore import QPoint, QPointF, QRectF, QSize, Qt, QTimer
-from PyQt5.QtGui import QColor, QIntValidator, QPainter
+from PyQt5.QtGui import QColor, QFont, QGuiApplication, QIntValidator, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -39,10 +41,238 @@ from PyQt5.QtWidgets import (
 from .assets import ICON_IDS, resolve_icon
 from .config import DEFAULT_SECTORS, MODIFIER_NAMES, SECTOR_COUNT, THEMES, Config
 from .hotkeys import parse_hotkey
+from .overlay import OverlayWindow
 
 log = logging.getLogger(__name__)
 
-__all__ = ["SettingsDialog"]
+_NIGHT_QSS = """
+QDialog, QWidget { background-color: #14161b; color: #e6e9ef; }
+QGroupBox { border: 1px solid #2b2f37; border-radius: 6px; margin-top: 10px;
+            padding: 8px 6px 6px 6px; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px;
+                   color: #f0c987; }
+QLabel { color: #e6e9ef; }
+QLineEdit, QComboBox, QSpinBox { background: #1d2027; border: 1px solid #343a45;
+                                 border-radius: 4px; padding: 3px 6px; color: #e6e9ef; }
+QSlider::groove:horizontal { height: 4px; background: #2b2f37; border-radius: 2px; }
+QSlider::handle:horizontal { width: 12px; margin: -5px 0; border-radius: 6px;
+                             background: #f0c987; }
+QPushButton { background: #232833; border: 1px solid #3a4150; border-radius: 5px;
+              padding: 5px 14px; color: #e6e9ef; }
+QPushButton:hover { background: #2c3340; }
+QPushButton:default { border-color: #f0c987; }
+QScrollArea { background: #14161b; }
+QCheckBox { color: #e6e9ef; }
+"""
+
+
+class WheelPreview(QWidget):
+    """Live wheel preview that loops: wake, idle, hover Enemy Missing, idle,
+    back to no selection, exit."""
+
+    SIZE = 280
+    FRAME_MS = 33
+    _STEPS = (
+        ("wake", 0.45),
+        ("idle", 1.0),
+        ("select", 0.35),
+        ("idle", 1.0),
+        ("deselect", 1.0),
+        ("exit", 1.0),
+    )
+
+    def __init__(
+        self,
+        config: Config,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self._config = config
+        self._paused = False
+        self._window: OverlayWindow | None = None
+        self._background: QPixmap | None = None
+        self._state_index = 0
+        self._state_start = time.perf_counter()
+        self._wheel_pixmap = QPixmap(self.SIZE, self.SIZE)
+        self._preview_config: Config | None = None
+        self._last_advance = time.perf_counter()
+        self._anim = QTimer(self)
+        self._anim.setInterval(self.FRAME_MS)
+        self._anim.timeout.connect(self._advance)
+        self._anim.start()
+        self._timer = QTimer(self)
+        self._timer.setInterval(600)
+        self._timer.timeout.connect(self._refresh_background)
+        self._timer.start()
+
+    # ------------------------------------------------------------------ public
+    def set_config(self, config: Config) -> None:
+        self._config = config
+        self._preview_config = None
+        self.update()
+
+    def shutdown(self) -> None:
+        self._anim.stop()
+        self._timer.stop()
+        if self._window is not None:
+            self._window.shutdown()
+            self._window = None
+
+    # ------------------------------------------------------------------ helpers
+    def _screen(self):
+        centre = self.mapToGlobal(self.rect().center())
+        return QGuiApplication.screenAt(centre) or QGuiApplication.primaryScreen()
+
+    def _miss_index(self) -> int:
+        for index, name in enumerate(self._config.sectors):
+            if "missing" in str(name).lower():
+                return index
+        return min(4, max(0, len(self._config.sectors) - 1))
+
+    def set_wheel_active(self, active: bool) -> None:
+        """Pause while the desktop wheel is up; resume once it hid."""
+        now = time.perf_counter()
+        if active:
+            if not self._paused:
+                self._paused = True
+                self._anim.stop()
+            return
+        if self._paused:
+            self._paused = False
+            self._state_start = now
+            self._last_advance = now
+            self._anim.start()
+            self.update()
+
+    def _refresh_background(self) -> None:
+        if self._paused:
+            return
+        self._background = self._grab_background()
+        self.update()
+
+    def _grab_background(self) -> QPixmap | None:
+        screen = self._screen()
+        if screen is None:
+            return None
+        centre = self.mapToGlobal(self.rect().center())
+        side = self.SIZE
+        area = screen.geometry()
+        x = max(area.x(), min(centre.x() - side // 2, area.x() + area.width() - side))
+        y = max(area.y(), min(centre.y() - side // 2, area.y() + area.height() - side))
+        try:
+            grabbed = screen.grabWindow(0, x, y, side, side)
+        except (RuntimeError, TypeError):
+            return None
+        if grabbed.isNull():
+            return None
+        blurred = grabbed.scaled(40, 40, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        return blurred.scaled(self.SIZE, self.SIZE, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+
+    def _current_step(self) -> tuple[str, float, float]:
+        name, duration = self._STEPS[self._state_index]
+        elapsed = time.perf_counter() - self._state_start
+        return name, duration, min(1.0, max(0.0, elapsed / max(duration, 1e-6)))
+
+    def _advance(self) -> None:
+        if self._paused:
+            return
+        now = time.perf_counter()
+        dt = min(0.05, max(0.0, now - self._last_advance))
+        self._last_advance = now
+        name, duration, _ = self._current_step()
+        if now - self._state_start >= duration:
+            self._state_index = (self._state_index + 1) % len(self._STEPS)
+            self._state_start = now
+            self._enter_state(self._STEPS[self._state_index][0])
+        if self._window is not None:
+            self._window._jarvis_advance(now, dt)
+        self.update()
+
+    def _enter_state(self, name: str) -> None:
+        window = self._window
+        if window is None:
+            return
+        now = time.perf_counter()
+        index = self._miss_index()
+        if name == "wake":
+            window._jarvis_mode = "open"
+            window._jarvis.reset()
+            window._hover = -1
+            window._weights = [0.0] * window._count
+            window._opened_at = now
+        elif name == "select":
+            window._jarvis_start_focus(now, index * 360.0 / max(1, window._count))
+        elif name == "deselect":
+            window._jarvis_start_restore(now)
+
+    # ------------------------------------------------------------------ painting
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt name
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.fillRect(self.rect(), QColor(9, 10, 12))
+            if self._background is None:
+                self._background = self._grab_background()
+            if self._background is not None:
+                painter.drawPixmap(0, 0, self._background)
+            if self._preview_config is None:
+                preview_radius = 86
+                scale = preview_radius / max(20.0, float(self._config.wheel_radius))
+                self._preview_config = replace(
+                    self._config,
+                    wheel_radius=preview_radius,
+                    dead_zone=max(6, int(self._config.dead_zone * scale)),
+                    icon_size=max(6, int(self._config.icon_size * scale)),
+                )
+            preview_config = self._preview_config
+            screen = self._screen()
+            if self._window is None and screen is not None:
+                self._window = OverlayWindow(screen, preview_config)
+            window = self._window
+            if window is None:
+                return
+            window.set_config(preview_config)
+            window.setGeometry(0, 0, self.SIZE, self.SIZE)
+            window._center = QPoint(self.SIZE // 2, self.SIZE // 2)
+            window._open = True
+            if self._state_index == 0:
+                window._opened_at = self._state_start
+            window._search_frames_alpha = 0.0
+            name, _duration, progress = self._current_step()
+            index = self._miss_index()
+            if name == "select":
+                weight = progress
+            elif name == "idle" and self._state_index == 3:
+                weight = 1.0
+            elif name == "deselect":
+                weight = 1.0 - progress
+            else:
+                weight = 0.0
+            window._hover = index if weight > 0.01 else -1
+            window._weights = [0.0] * window._count
+            if 0 <= index < window._count:
+                window._weights[index] = weight
+
+            pixmap = self._wheel_pixmap
+            pixmap.fill(Qt.transparent)
+            wheel_painter = QPainter(pixmap)
+            try:
+                window._paint_wheel(wheel_painter, time.perf_counter())
+            finally:
+                wheel_painter.end()
+            opacity = 1.0 - progress if name == "exit" else 1.0
+            painter.setOpacity(max(0.0, opacity))
+            painter.drawPixmap(0, 0, pixmap)
+            painter.setOpacity(1.0)
+            painter.setPen(QColor(255, 255, 255, 60))
+            painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+            painter.setFont(QFont("Consolas", 8))
+            painter.setPen(QColor(210, 216, 226, 170))
+            painter.drawText(8, self.SIZE - 8, "live preview")
+        finally:
+            painter.end()
+
 
 MODIFIER_LABELS: dict[str, str] = {
     "ctrl": "Ctrl",
@@ -59,12 +289,7 @@ BUTTON_LABELS: dict[str, str] = {
     "x2": "Side button 2 (X2)",
 }
 
-THEME_LABELS: dict[str, str] = {
-    "gold": "Gold",
-    "blue": "Blue",
-    "red": "Red",
-    "lol": "League style (lol)",
-}
+THEME_LABELS: dict[str, str] = {"jarvis": "Jarvis"}  # v0.4.0: fixed look
 
 _RADIUS_MIN = 60
 _RADIUS_MAX = 400
@@ -136,9 +361,15 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
         pause_state_getter: Callable[[], bool] | None = None,
         pause_toggled: Callable[[bool], None] | None = None,
+        on_apply: Callable[[Config], None] | None = None,
+        wheel_activity=None,
     ) -> None:
         super().__init__(parent)
         self._base_config = config
+        self._wheel_activity = wheel_activity
+        self._on_apply = on_apply
+        self._preview_config: Config | None = None
+        self._night_mode = bool(getattr(config, "settings_night_mode", False))
         # The trigger switch shows run-time state, which lives in the
         # application rather than in the config, so it is read through a
         # callback and written back through another one.
@@ -152,11 +383,16 @@ class SettingsDialog(QDialog):
 
         self.setWindowTitle("lolping settings")
         self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
-        self.setFixedSize(660, 840)
+        self.setFixedSize(1010, 880)
 
         self._build_ui()
         self._connect_signals()
         self._load_config(config)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setInterval(200)
+        self._preview_timer.timeout.connect(self._refresh_preview)
+        self._preview_timer.start()
+
         if self._pause_state_getter is not None:
             # Poll instead of relying on a signal: the application can change
             # state from the hotkey thread while this modal dialog is open.
@@ -203,13 +439,15 @@ class SettingsDialog(QDialog):
             open_settings_on_start=bool(self._start_settings_check.isChecked()),
             start_with_windows=bool(self._autostart_check.isChecked()),
             show_labels=bool(self._labels_check.isChecked()),
-            theme=str(self._theme_combo.currentData() or self._base_config.theme),
             show_icons=bool(self._icons_check.isChecked()),
             sector_icons=[
                 str(combo.currentData() or resolve_icon(None, index))
                 for index, combo in enumerate(self._sector_icon_combos)
             ],
             icon_size=int(self._icon_size_slider.value()),
+            jarvis_backdrop=int(self._backdrop_slider.value()),
+            dsh_mode=bool(self._dsh_check.isChecked()),
+            settings_night_mode=bool(self._night_check.isChecked()),
         )
 
     @staticmethod
@@ -218,9 +456,13 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
         pause_state_getter: Callable[[], bool] | None = None,
         pause_toggled: Callable[[bool], None] | None = None,
+        on_apply: Callable[[Config], None] | None = None,
+        wheel_activity=None,
     ) -> Config | None:
-        """Show the dialog modally; return the edited config or ``None``."""
-        dialog = SettingsDialog(config, parent, pause_state_getter, pause_toggled)
+        """Show the dialog modally; Apply calls ``on_apply`` without closing."""
+        dialog = SettingsDialog(
+            config, parent, pause_state_getter, pause_toggled, on_apply, wheel_activity
+        )
         try:
             accepted = dialog.exec_() == QDialog.Accepted
             return dialog.edited_config() if accepted else None
@@ -228,6 +470,51 @@ class SettingsDialog(QDialog):
             dialog.deleteLater()
 
     # -------------------------------------------------------------------- setup
+    # ------------------------------------------------------------------ preview
+    def _set_night_mode(self, enabled: bool) -> None:
+        self._night_mode = bool(enabled)
+        self.setStyleSheet(_NIGHT_QSS if self._night_mode else "")
+
+    def _refresh_preview(self) -> None:
+        try:
+            config = self.edited_config()
+        except (TypeError, ValueError):  # pragma: no cover - transient slider state
+            return
+        if self._preview_config is None or config != self._preview_config:
+            self._preview_config = config
+            self._preview.set_config(config)
+
+    def _apply_values(self) -> None:
+        """Apply the form to the running app without closing the dialog."""
+        problem = self._validate()
+        if problem is not None:
+            self._show_error(problem)
+            return
+        self._clear_error()
+        config = self.edited_config()
+        self._base_config = config
+        self._preview_config = config
+        if self._on_apply is not None:
+            self._on_apply(config)
+        self._error_label.setText("Applied")
+        self._error_label.setStyleSheet("color: #3f9a5b;")
+        self._error_label.setVisible(True)
+
+    def _close_dialog(self) -> None:
+        self._preview.shutdown()
+        self.reject()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt name
+        super().showEvent(event)
+        # Keep this dialog out of screen grabs so the live preview can show the
+        # real desktop underneath it (Windows 10 2004+).
+        try:
+            import ctypes
+
+            ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x11)
+        except Exception:  # pragma: no cover - platform without the API
+            log.debug("WDA_EXCLUDEFROMCAPTURE unavailable", exc_info=True)
+
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 14, 14, 12)
@@ -250,7 +537,21 @@ class SettingsDialog(QDialog):
         content_layout.addStretch(1)
 
         scroll.setWidget(content)
-        outer.addWidget(scroll, 1)
+        body = QHBoxLayout()
+        preview_box = QGroupBox("Preview", self)
+        preview_layout = QVBoxLayout(preview_box)
+        self._preview = WheelPreview(self._base_config, preview_box)
+        if self._wheel_activity is not None:
+            self._wheel_activity.connect(self._preview.set_wheel_active)
+        preview_layout.addWidget(self._preview, 0, Qt.AlignHCenter)
+        hint = QLabel("Live preview — Apply to use it on the desktop", preview_box)
+        hint.setWordWrap(True)
+        hint.setAlignment(Qt.AlignHCenter)
+        preview_layout.addWidget(hint)
+        preview_layout.addStretch(1)
+        body.addWidget(preview_box, 0)
+        body.addWidget(scroll, 1)
+        outer.addLayout(body, 1)
 
         self._error_label = QLabel("", self)
         self._error_label.setWordWrap(True)
@@ -264,17 +565,13 @@ class SettingsDialog(QDialog):
         bottom_row.addWidget(self._reset_button)
         bottom_row.addStretch(1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        ok_button = buttons.button(QDialogButtonBox.Ok)
-        if ok_button is not None:
-            ok_button.setText("OK")
-            ok_button.setDefault(True)
-        cancel_button = buttons.button(QDialogButtonBox.Cancel)
-        if cancel_button is not None:
-            cancel_button.setText("Cancel")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        bottom_row.addWidget(buttons)
+        self._apply_button = QPushButton("Apply", self)
+        self._apply_button.setDefault(True)
+        self._apply_button.clicked.connect(self._apply_values)
+        self._close_button = QPushButton("Close", self)
+        self._close_button.clicked.connect(self._close_dialog)
+        bottom_row.addWidget(self._close_button)
+        bottom_row.addWidget(self._apply_button)
         outer.addLayout(bottom_row)
 
     def _build_trigger_group(self, parent: QWidget) -> QGroupBox:
@@ -344,11 +641,10 @@ class SettingsDialog(QDialog):
         )
 
         options_row = QHBoxLayout()
-        options_row.addWidget(QLabel("Theme:", group))
-        self._theme_combo = QComboBox(group)
-        for name in THEMES:
-            self._theme_combo.addItem(THEME_LABELS.get(name, name.capitalize()), name)
-        options_row.addWidget(self._theme_combo)
+        options_row.addWidget(QLabel("Appearance:", group))
+        fixed_label = QLabel(THEME_LABELS.get("jarvis", "Jarvis"), group)
+        fixed_label.setToolTip("The v0.4.0 look is fixed; there is no theme selector.")
+        options_row.addWidget(fixed_label)
         options_row.addSpacing(12)
         self._labels_check = QCheckBox("Show labels", group)
         options_row.addWidget(self._labels_check)
@@ -368,6 +664,21 @@ class SettingsDialog(QDialog):
         layout.addLayout(
             self._slider_row(
                 "Icon size:", self._icon_size_slider, self._icon_size_value, group
+            )
+        )
+
+        self._backdrop_slider = QSlider(Qt.Horizontal, group)
+        self._backdrop_slider.setRange(0, 100)
+        self._backdrop_slider.setPageStep(10)
+        self._backdrop_slider.setToolTip(
+            "Opacity of the dark plate behind the jarvis rings (0-100 %)."
+        )
+        self._backdrop_value = QLabel("", group)
+        self._backdrop_value.setMinimumWidth(60)
+        self._backdrop_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        layout.addLayout(
+            self._slider_row(
+                "Jarvis backdrop:", self._backdrop_slider, self._backdrop_value, group
             )
         )
         return group
@@ -483,6 +794,17 @@ class SettingsDialog(QDialog):
 
         self._start_settings_check = QCheckBox("Open settings when lolping starts", group)
         layout.addWidget(self._start_settings_check)
+
+        self._dsh_check = QCheckBox("DSH mode (only injected slices selectable)", group)
+        self._dsh_check.setToolTip(
+            "Slices without an injected function are dimmed and cannot be selected.\n"
+            "Injected: Enemy Missing (region capture intent), On My Way (web search)."
+        )
+        layout.addWidget(self._dsh_check)
+
+        self._night_check = QCheckBox("Night mode for this window", group)
+        layout.addWidget(self._night_check)
+        self._night_check.toggled.connect(self._set_night_mode)
         return group
 
     @staticmethod
@@ -508,6 +830,7 @@ class SettingsDialog(QDialog):
         self._dead_slider.valueChanged.connect(self._on_dead_zone_changed)
         self._tau_slider.valueChanged.connect(self._on_tau_changed)
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
+        self._backdrop_slider.valueChanged.connect(self._on_backdrop_changed)
         self._volume_slider.valueChanged.connect(self._on_volume_changed)
         self._icons_check.toggled.connect(self._on_icons_toggled)
 
@@ -520,11 +843,11 @@ class SettingsDialog(QDialog):
         self._toggle_hotkey_edit.textChanged.connect(self._clear_error)
         self._trigger_switch.toggled.connect(self._on_trigger_switch_toggled)
         self._button_combo.currentIndexChanged.connect(self._clear_error)
-        self._theme_combo.currentIndexChanged.connect(self._clear_error)
         self._sound_check.toggled.connect(self._clear_error)
         self._hover_ticks_check.toggled.connect(self._clear_error)
         self._autostart_check.toggled.connect(self._clear_error)
         self._labels_check.toggled.connect(self._clear_error)
+        self._dsh_check.toggled.connect(self._clear_error)
         self._mark_spin.valueChanged.connect(self._clear_error)
         self._reset_button.clicked.connect(self._reset_to_defaults)
 
@@ -564,10 +887,14 @@ class SettingsDialog(QDialog):
         self._sync_trigger_switch()
         self._autostart_check.setChecked(bool(config.start_with_windows))
         self._labels_check.setChecked(bool(config.show_labels))
+        self._dsh_check.setChecked(bool(config.dsh_mode))
+        self._night_check.setChecked(bool(config.settings_night_mode))
+        self._set_night_mode(bool(config.settings_night_mode))
         self._icons_check.setChecked(bool(config.show_icons))
 
         icon_size = min(max(int(config.icon_size), _ICON_SIZE_MIN), _ICON_SIZE_MAX)
         self._icon_size_slider.setValue(icon_size)
+        self._backdrop_slider.setValue(min(max(int(config.jarvis_backdrop), 0), 100))
         for index, combo in enumerate(self._sector_icon_combos):
             icon_id = resolve_icon(config.sector_icons, index)
             position = combo.findData(icon_id)
@@ -577,15 +904,13 @@ class SettingsDialog(QDialog):
         self._volume_slider.setValue(min(max(volume, _VOLUME_MIN), _VOLUME_MAX))
         self._hover_ticks_check.setChecked(bool(config.sound_hover_ticks))
 
-        theme_index = self._theme_combo.findData(config.theme)
-        self._theme_combo.setCurrentIndex(theme_index if theme_index >= 0 else 0)
-
         # Setting slider values above fires the handlers, but call them once more
         # so the labels are correct even when the value did not change.
         self._on_radius_changed(self._radius_slider.value())
         self._on_dead_zone_changed(self._dead_slider.value())
         self._on_tau_changed(self._tau_slider.value())
         self._on_icon_size_changed(self._icon_size_slider.value())
+        self._on_backdrop_changed(self._backdrop_slider.value())
         self._on_volume_changed(self._volume_slider.value())
         self._on_icons_toggled(self._icons_check.isChecked())
         self._clear_error()
@@ -595,6 +920,9 @@ class SettingsDialog(QDialog):
         self._load_config(Config())
 
     # ------------------------------------------------------------------ handlers
+    def _on_backdrop_changed(self, value: int) -> None:
+        self._backdrop_value.setText(f"{int(value)} %")
+
     def _on_radius_changed(self, value: int) -> None:
         value = int(value)
         self._radius_value.setText(f"{value} px")
@@ -676,7 +1004,12 @@ class SettingsDialog(QDialog):
     def _clear_error(self, *_args: object) -> None:
         if self._error_label.isVisible() or self._error_label.text():
             self._error_label.clear()
+            self._error_label.setStyleSheet("color: #cc3333;")
             self._error_label.setVisible(False)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt name
+        self._preview.shutdown()
+        super().closeEvent(event)
 
     def accept(self) -> None:
         """Only close the dialog when the current values are valid."""

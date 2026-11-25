@@ -364,3 +364,42 @@ def clear_caches() -> None:
 def assets_dir() -> Path:
     """Folder where a user may drop their own icons."""
     return Path(__file__).resolve().parents[2] / "assets" / "icons"
+
+
+def jarvis_dir() -> Path:
+    """Folder holding the baked JARVIS band textures.
+
+    Tries the source tree first, then the folder next to a frozen executable
+    (PyInstaller one-folder builds place ``assets/jarvis`` there).
+    """
+    candidates = [Path(__file__).resolve().parents[2] / "assets" / "jarvis"]
+    try:
+        import sys
+
+        if getattr(sys, "frozen", False):
+            candidates.append(Path(sys.executable).resolve().parent / "assets" / "jarvis")
+    except Exception:  # pragma: no cover - defensive
+        pass
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return candidates[0]
+
+
+_JARVIS_CACHE: dict[str, "QPixmap | None"] = {}
+
+
+def jarvis_pixmap(name: str) -> "QPixmap | None":
+    """Load (once) a baked JARVIS texture, or ``None`` if it is missing.
+
+    Missing textures degrade to "no band content" instead of failing the paint,
+    so a trimmed installation still shows a usable wheel.
+    """
+    if name in _JARVIS_CACHE:
+        return _JARVIS_CACHE[name]
+    path = jarvis_dir() / f"{name}.png"
+    pixmap = QPixmap(str(path)) if path.is_file() else None
+    if pixmap is not None and pixmap.isNull():
+        pixmap = None
+    _JARVIS_CACHE[name] = pixmap
+    return pixmap

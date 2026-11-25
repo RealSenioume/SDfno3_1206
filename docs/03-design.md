@@ -498,7 +498,9 @@ expected results (`docs/04-test-plan.md`, TC-28 … TC-30).
 | `open_settings_on_start` | bool | true | show the settings window once at start-up |
 | `start_with_windows` | bool | false | HKCU Run entry |
 | `show_labels` | bool | true | |
-| `theme` | str | `"gold"` | gold/blue/red |
+| `theme` | str | `"jarvis"` | jarvis (fixed in v0.4.0) |
+| `jarvis_backdrop` | int | `50` | 0-100 |
+| `dsh_mode` | bool | `False` | injected slices only |
 | `show_icons` | bool | true | |
 | `sector_icons` | list[str] | default icon per slice | any of the ten icon ids |
 | `sector_images` | list[str] | eight empty strings | PNG path or `""`, per slice |

@@ -1,4 +1,4 @@
-# 6. Final report outline — lolping v0.3.4
+# 6. Final report outline — lolping v0.4.0
 
 Skeleton for the final report: each section lists the points to make and the
 evidence behind them. Suggested length 6,000–8,000 words excluding appendices,
@@ -8,7 +8,7 @@ appear; anything unmeasured is "TBD - measure" until it is replaced.
 ## Title page
 
 - Title: *lolping: a desktop ping-wheel overlay for Windows*; subtitle
-  *Requirements, design, implementation and evaluation of v0.3.4*.
+  *Requirements, design, implementation and evaluation of v0.4.0*.
 - Authors and student IDs, course and module, supervisor, submission date.
 - Version, repository location.
 

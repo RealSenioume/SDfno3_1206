@@ -24,7 +24,7 @@ APP_NAME = "lolping-desktop"
 
 MODIFIER_NAMES: tuple[str, ...] = ("ctrl", "alt", "shift", "win")
 MOUSE_BUTTONS: tuple[str, ...] = ("left", "right", "middle", "x1", "x2")
-THEMES: tuple[str, ...] = ("gold", "blue", "red", "lol")
+THEMES: tuple[str, ...] = ("jarvis",)  # v0.4.0: the look is fixed
 
 SECTOR_COUNT = 8
 
@@ -109,7 +109,13 @@ class Config:
     open_settings_on_start: bool = True
     start_with_windows: bool = False
     show_labels: bool = True
-    theme: str = "gold"
+    theme: str = "jarvis"
+    #: Opacity of the dark plate behind the jarvis rings, in percent.
+    jarvis_backdrop: int = 50
+    #: DSH mode: only slices with an injected action stay selectable.
+    dsh_mode: bool = False
+    #: Night mode for the settings window.
+    settings_night_mode: bool = False
 
     # ---- slice artwork (v0.3) ----
     show_icons: bool = True
@@ -175,6 +181,13 @@ class Config:
         )
         config.show_labels = _flag(data.get("show_labels"), config.show_labels)
         config.theme = _choice(data.get("theme"), THEMES, config.theme)
+        config.jarvis_backdrop = int(
+            _number(data.get("jarvis_backdrop"), 0, 100, config.jarvis_backdrop)
+        )
+        config.dsh_mode = _flag(data.get("dsh_mode"), config.dsh_mode)
+        config.settings_night_mode = _flag(
+            data.get("settings_night_mode"), config.settings_night_mode
+        )
 
         config.show_icons = _flag(data.get("show_icons"), config.show_icons)
         config.sector_icons = _clean_icon_ids(
