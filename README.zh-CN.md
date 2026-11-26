@@ -20,44 +20,53 @@
 - 无其他运行时依赖，运行期间不访问网络
 ## 下载
 
-**Windows v0.3.4** —— `lolping-0.3.4-win64.zip`，36.3 MB，SHA-256
-`f62ac07d6db020a5a1b8e2176fe5f018ea53c0c04ae1c64eb1f584b14925ead0`。
+**Windows v0.4.0** —— `lolping-0.4.0-win64.zip`，36.7 MB，SHA-256
+`e9899201e32243bbb8d1bfc5ceabe425f7172917eecd4dac16daaaf7ed232a3f`。
 解压到一个空文件夹后运行 `lolping\lolping.exe`，`_internal` 文件夹必须与它同级。
 exe 未签名，Windows SmartScreen 可能要求确认。
 
-- [下载 lolping-0.3.4-win64.zip](release/lolping-0.3.4-win64.zip)
+- [下载 lolping-0.4.0-win64.zip](release/lolping-0.4.0-win64.zip)
 
 
 
 ## 功能
 
-- 两套轮盘外观：原有的灰金风格，以及一个参考《英雄联盟》的 `lol` 主题（金色分隔线、向外光束、带 PING / BACK 的中央徽章）。扇区图标可以用本地 PNG 替换；仓库本身不附带任何图标素材（见 `assets/icons/ICONS.md`）。
-- 不拖动的单击会发送中央（基础）ping；拖动后在死区内松开仍然取消。
+- **Jarvis 数据仪表主题**（v0.4.0 唯一外观）：三条旋转的观测窗口覆盖烘焙的香港等高线、
+  地标与等温线带；地标名沿弧线排布并带经纬度微标签；PCB 风格走线、外环之外的遥测带，
+  以及实时从桌面抓取的真实磨砂玻璃背景。
 - 八扇区径向菜单，通过"按住并拖动"的手势在鼠标位置展开（默认：按住 **Alt + 鼠标左键**）。
+  不拖动的单击发送中央（基础）ping；在死区内松开、按 **Esc** 或点击其他鼠标键则取消。
 - 默认扇区（从 3 点钟方向顺时针）：On My Way、All-In、Assist Me、Need Vision、
-  Enemy Missing、Enemy Vision、Danger、Push。八个扇区都可重命名。
-- 每个扇区显示一个矢量图标：每个扇区有默认图标，可在十个图标中选择，也可用自定义 PNG
-  替换单个扇区。不使用 Riot Games 美术素材。
-- 简短的展开动画（130 ms 内缩放并淡入）。提交时播放分层爆裂动画：两个扩散圆环、五条
-  方向性光束、图标弹出以及扇区名称。
+  Enemy Missing、Enemy Vision、Danger、Push。八个扇区都可重命名，每个扇区都有矢量图标，
+  并可用自定义 PNG 替换。
+- 提交编排：圆环向所选扇区收缩，环内容在形状保持的同时淡出，扇区名称弹出，中心播放
+  标记爆裂动画。
 - 四个合成音效：展开、悬停咔哒、提交铃音、取消下滑音。声音默认关闭，音量默认 50%。
-- 在死区外松开即提交；在 34 px 死区内松开、按 **Esc**、或点击其他鼠标键则取消。
-- 触发方式可配置：Ctrl/Alt/Shift/Win 的任意组合，配合左/右/中/X1/X2 鼠标键。
-- 半透明、无边框、始终置顶的轮盘，不会从下层窗口抢走焦点。每块显示器一个叠加层，
-  显示在光标所在屏幕。
-- 设置窗口：轮盘半径、死区、扇区名称、每扇区图标选择、图标大小、是否显示图标、
-  动画速度、标记持续时间、声音、音量、悬停咔哒、触发开关、暂停热键、启动时打开设置、开机启动、主题、恢复默认。
-- 系统托盘菜单：Settings（设置）、Ping history log（标记历史）、Open config folder
-  （打开配置目录）、Pause/Resume（暂停/恢复）、Quit（退出）。
-- 每次提交的标记都会写入本地 JSONL 日志；另有可选的延迟测量模式。
-- 配置读取容错：损坏或被手工改错的配置文件会回退到默认值，而不是导致无法启动。
-- 单实例运行；可选开机启动。
+- **DSH 模式**（设置 → DSH mode）：没有注入功能的扇区会被淡化且无法选中。注入的扇区是
+  **Enemy Missing**（区域截图）与 **On My Way**（画面搜索）；悬停搜索扇区时会显示
+  640×360 截图框与 320×180 OCR 判定框。
+- **意图管线**：每次注入扇区的提交都会向
+  `%APPDATA%\lolping-desktop\intents.jsonl` 追加一行 JSON；截图动作还会在 `regions/`
+  下保存一张 640×360 PNG。
+- **On My Way 文本搜索**：截取中心 320×180 区域，调用离线 Windows OCR（不联网），
+  对识别行做中心加权与 0–100 可用性评分，再在默认浏览器中打开文本搜索
+  （≥60 文本搜索；25–60 文本搜索并把截图放入剪贴板；<25 为下一里程碑的图片搜索路径）。
+- **设置窗口**：夜间模式、**Apply** 不关闭窗口，以及 280×280 的实时轮盘预览——预览下方
+  是实时抓取并模糊的桌面。预览循环播放唤醒/选择/退出动画，桌面轮盘出现时自动暂停。
+- 可配置触发方式（Ctrl/Alt/Shift/Win 加左/右/中/X1/X2 鼠标键）、轮盘半径、死区、
+  Jarvis 背景不透明度、图标大小/标签、标记时长、声音、暂停热键与开机启动。
+- 半透明、无边框、始终置顶的轮盘，不会从下层窗口抢走焦点；每块显示器一个叠加层，
+  显示在光标所在屏幕；单实例运行。
+- 托盘菜单（设置、标记历史、配置目录、暂停/恢复、退出）、本地 JSONL 日志与可选的延迟
+  测量模式；配置读取容错。
+- **DSH 插件骨架** `plugin/lolping-intents`：把意图日志暴露为 `lolping_intents` 工具并
+  跟踪新记录，agent 可以读取截图。
 
 ## 快速开始
 
 ```powershell
-git clone https://github.com/RealSenioume/SDfno3_1101
-cd SDfno3_1101
+git clone https://github.com/RealSenioume/SDfno3_1206
+cd SDfno3_1206
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -118,6 +127,8 @@ python -m lolping [--config PATH] [--latency-probe] [--debug] [--self-test]
 | --- | --- |
 | `config.json` | 设置窗口保存的配置。首次保存时创建；读取时容错。 |
 | `pings.jsonl` | 每次提交的标记一行 JSON：`ts`、`sector`、`name`、`x`、`y`。 |
+| `intents.jsonl` | DSH 模式下每次注入提交一行 JSON：扇区、动作、区域、截图路径、OCR 文本/分数/模式。 |
+| `regions/` | 注入动作保存的 PNG 截图（`region-*.png`、`search-*.png`）。 |
 | `latency.jsonl` | 仅在 `--latency-probe` 时写入：`ts`、`frame_ms`、`commit_ms`。 |
 | `lolping.log` | 滚动写入的诊断日志；反馈问题时请附上。 |
 
@@ -134,6 +145,7 @@ python -m lolping [--config PATH] [--latency-probe] [--debug] [--self-test]
 | `docs/06-report-outline.md` | 最终报告的大纲与证据计划。 |
 | `docs/07-build-and-release.md` | 打包与发布步骤。 |
 | `docs/08-report-draft.md` | 报告正文草稿，未测量的数字标记为 TBD。 |
+| `docs/10-dsh-plugin.md` | DSH 插件骨架、安装/验证步骤与限制。 |
 | `docs/09-roadmap.md` | 活路线图：现在 / 接下来 / 更远，含 DSH 插件与多人协作研究（中文版：`docs/09-roadmap.zh-CN.md`）。 |
 
 ## 已知限制
@@ -149,7 +161,10 @@ python -m lolping [--config PATH] [--latency-probe] [--debug] [--self-test]
   更改。
 - **声音不叠加。** Windows 的 `winsound` API 一次只能异步播放一个声音，因此新的音效会
   打断上一个。对于短音效而言这是刻意的取舍，不是缺陷。
-- **范围。** 仅支持 Windows；v0.3.4 固定为八个扇区；不具备游戏感知能力；没有队伍或房间
+- **图片搜索。** On My Way 目前打开文本搜索；截图/图片搜索档位（M2）尚未发布。
+- **DSH 插件。** `plugin/lolping-intents` 只是骨架：把意图日志暴露为工具，但还不会
+  自动发起 agent 回合，也不写回结果；请通过 DSH bundle installer 安装。
+- **范围。** 仅支持 Windows；v0.4.0 固定为八个扇区；不具备游戏感知能力；没有队伍或房间
   功能；不支持跨平台。
 
 ## 许可证

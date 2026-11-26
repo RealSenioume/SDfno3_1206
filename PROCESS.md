@@ -148,3 +148,26 @@ For more details during development, check out the docs.
 - 162 tests; the frozen exe reports 0.3.4 and passes --self-test on its own.
 
 - 10.29.2026
+
+# V0.4.0 Update
+
+- Replaced the two-skin design with a single **Jarvis** theme: three rotating observation windows over baked Hong Kong contour, landmark and isotherm bands, arc-set landmark names with latitude/longitude micro-labels, PCB-style traces, an outer telemetry ring and a real frosted-glass backdrop captured from the desktop. The old `lol` and gold skins are gone; one theme kept the animation and test surface honest.
+
+- Added **DSH mode**: slices without an injected action are dimmed and unselectable, so the wheel can be pointed at the two slices that actually do something instead of pretending all eight are equal.
+
+- Added the **intent pipeline**: injected commits append one JSON line to `intents.jsonl`, and capture actions (Enemy Missing) save a 640x360 PNG under `regions/`. The overlay hides, waits for the compositor, grabs the region at native resolution and only then returns. Nothing talks to the game.
+
+- Added **On My Way text search**: capture the centre 320x180, offline Windows OCR (PowerShell + WinRT, no network), centre-weighted line choice, 0-100 usability score and a default-browser search. Calibrated the 60/25 thresholds on five real captures and four text-free wallpapers; the calibration tool stays in `tools/calibrate_search.py`.
+
+- Rebuilt the **Settings window**: night mode, Apply that does not close, and a live wheel preview over a live frosted capture of the desktop. The preview loops wake/select/exit, and the overlay now emits one show/hide event so the preview stops while the desktop wheel owns the frame budget - polling inside the preview timer deadlocked itself the first time.
+
+- Fixed the ring textures ignoring the fade: the texture pass overwrote the painter opacity instead of multiplying it, so contours stayed bright while the rings disappeared.
+
+- Cut the landmark-label stutter: fonts, glyph pixmaps and arc layouts are cached and pre-warmed at wheel creation. The first reveal dropped from a ~69 ms frame to ~9 ms; the label pass now costs about 1.3 ms per frame.
+
+- Added the **DSH bundle skeleton** `plugin/lolping-intents` (bundle manifest, patch, locale, icon, `lolping_intents` tool, log tailer, Node tests). It is read-only and still a skeleton: no automatic agent turn and no result write-back.
+
+- Packaged v0.4.0 with Python 3.12.10 and PyInstaller 6.22.3: `release/lolping-0.4.0-win64.zip` (36.7 MB, sha256 `e9899201e322...232a3f`). The build ran the test suite, the bilingual check and a frozen offscreen self-test before zipping; the zip is committed because this machine still has no release-asset tooling.
+- Moved the project to the new repository `SDfno3_1206`; the old `SDfno3_1101` remote is kept as `old-origin`. 235 tests and the bilingual check pass at this tag.
+
+- 11.26.2026

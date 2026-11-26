@@ -1,14 +1,15 @@
-__pycache__/
+﻿__pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
 build/dist/
 dist/
-# Build output; the published archive is committed on purpose
 release/*
 !release/lolping-0.3.4-win64.zip
 !release/lolping-0.3.4-win64.zip.sha256
+!release/lolping-0.4.0-win64.zip
+!release/lolping-0.4.0-win64.zip.sha256
 *.spec.bak
 .pytest_cache/
 .mypy_cache/

@@ -2,7 +2,7 @@
 
 **Course:** SD5913 — Semester 1
 **Author:** Zhexian Tao
-**Student repository:** <https://github.com/RealSenioume/SDfno3_1101>
+**Student repository:** <https://github.com/RealSenioume/SDfno3_1206>
 **Version described:** 0.3.4
 
 ---

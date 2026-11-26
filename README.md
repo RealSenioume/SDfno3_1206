@@ -24,57 +24,65 @@ contains no Riot Games assets and no binary media files.
 - No other runtime dependencies, no network access at runtime
 ## Download
 
-**Windows v0.3.4** - `lolping-0.3.4-win64.zip`, 36.3 MB, SHA-256
-`f62ac07d6db020a5a1b8e2176fe5f018ea53c0c04ae1c64eb1f584b14925ead0`.
+**Windows v0.4.0** - `lolping-0.4.0-win64.zip`, 36.7 MB, SHA-256
+`e9899201e32243bbb8d1bfc5ceabe425f7172917eecd4dac16daaaf7ed232a3f`.
 Unzip it into an empty folder and run `lolping\lolping.exe`; the `_internal`
 folder must stay next to it. The executable is unsigned, so Windows SmartScreen
 may ask for confirmation.
 
-- [Download lolping-0.3.4-win64.zip](release/lolping-0.3.4-win64.zip)
+- [Download lolping-0.4.0-win64.zip](release/lolping-0.4.0-win64.zip)
 
 
 
 ## Features
 
-- Two wheel skins: the original grey-and-gold look and a League-inspired
-  `lol` theme (gold separators, outward light beams, centre medallion with
-  PING / BACK). Slice icons may be replaced by local PNG files; the
-  repository ships none (see `assets/icons/ICONS.md`).
-- A click without dragging sends the centre (basic) ping; dragging and
-  releasing inside the dead zone still cancels.
-- Eight-sector radial menu, opened at the mouse cursor by a hold-and-drag
-  gesture (default: hold **Alt + left mouse button**).
+- **Jarvis data-instrument theme** (the only skin in v0.4.0): three rotating
+  observation windows over baked Hong Kong contour, landmark and isotherm bands,
+  arc-set landmark names with latitude/longitude micro-labels, PCB-style traces,
+  a telemetry band outside the outer ring and a real frosted-glass backdrop
+  captured from the desktop.
+- Eight-sector radial menu, opened at the mouse cursor by a hold-and-drag gesture
+  (default: hold **Alt + left mouse button**). A click without dragging sends the
+  centre (basic) ping; releasing in the dead zone, pressing **Esc** or clicking
+  another mouse button cancels.
 - Default sectors, clockwise from 3 o'clock: On My Way, All-In, Assist Me, Need
-  Vision, Enemy Missing, Enemy Vision, Danger, Push. All eight are
-  renameable.
-- Every slice shows a vector icon: a default icon per sector, a choice of ten
-  icon ids, and an optional custom PNG per slice. No Riot Games art is used.
-- Short wheel-open animation (scale and fade over 130 ms). Committing plays a
-  layered burst: two expanding rings, five directional streaks, an icon pop and
-  the sector name.
-- Four synthesised sound cues — open, hover tick, commit chime and cancel sweep.
+  Vision, Enemy Missing, Enemy Vision, Danger, Push. All eight are renameable and
+  each slice has a vector icon with an optional custom PNG.
+- Commit choreography: rings shrink around the chosen slice, ring content fades
+  while the shape holds, the sector name pops and a mark burst plays at the centre.
+- Four synthesised sound cues - open, hover tick, commit chime and cancel sweep.
   Sound is off by default; volume starts at 50%.
-- Release outside the dead zone to commit; release inside the 34 px dead zone,
-  press **Esc**, or click another mouse button to cancel.
-- Configurable trigger: any combination of Ctrl/Alt/Shift/Win plus left, right,
-  middle, X1 or X2 mouse button.
-- Translucent, frameless, always-on-top wheel that does not steal focus from
-  the window underneath. One overlay per monitor, positioned under the cursor.
-- Settings dialog: wheel radius, dead zone, sector names, per-slice icon choice,
-  icon size, show icons, animation speed, mark duration, sound, volume, hover
-  ticks, a trigger on/off switch, pause hotkey, open settings at start-up, start with Windows, theme, reset to defaults.
-- System-tray menu: Settings, Ping history log, Open config folder,
-  Pause/Resume, Quit.
-- Local JSONL log of every committed ping and an optional latency-probe mode.
-- Tolerant configuration loading: a corrupt or hand-edited config falls back to
-  defaults instead of preventing start-up.
-- Single instance; optional start with Windows.
+- **DSH mode** (Settings -> DSH mode): slices without an injected action are
+  dimmed and cannot be selected. Injected slices are **Enemy Missing** (region
+  capture) and **On My Way** (screen search); the search slice shows the
+  640x360 capture frame and the 320x180 OCR frame while it is hovered.
+- **Intent pipeline**: every injected commit appends one JSON line to
+  `%APPDATA%\lolping-desktop\intents.jsonl`; a capture also saves a 640x360 PNG
+  under `regions/`.
+- **On My Way text search**: captures the centre 320x180 region, runs the offline
+  Windows OCR (no network), centre-weights the recognised lines, scores usability
+  (0-100) and opens a text search in the default browser (>=60 text; 25-60 text
+  plus the screenshot on the clipboard; <25 is the image-search path reserved for
+  the next milestone).
+- **Settings window**: night mode, **Apply** without closing, and a live 280x280
+  wheel preview over a live frosted capture of the desktop. The preview loops the
+  wake/select/exit choreography and pauses while the desktop wheel is on screen.
+- Configurable trigger (Ctrl/Alt/Shift/Win plus left/right/middle/X1/X2), wheel
+  radius, dead zone, Jarvis backdrop opacity, icon size/labels, mark duration,
+  sound, pause hotkey and start with Windows.
+- Translucent, frameless, always-on-top overlay that does not steal focus from
+  the window underneath; one overlay per monitor, positioned under the cursor;
+  single instance.
+- Tray menu (Settings, ping history, config folder, pause/resume, quit), local
+  JSONL logs and an optional latency probe; tolerant configuration loading.
+- **DSH bundle skeleton** in `plugin/lolping-intents`: exposes the intent log as
+  the `lolping_intents` tool and tails it, so the agent can read captures.
 
 ## Quick start
 
 ```powershell
-git clone https://github.com/RealSenioume/SDfno3_1101
-cd SDfno3_1101
+git clone https://github.com/RealSenioume/SDfno3_1206
+cd SDfno3_1206
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -142,6 +150,8 @@ All user data lives in `%APPDATA%\lolping-desktop\`:
 | --- | --- |
 | `config.json` | Settings written by the Settings dialog. Created on first save; loaded tolerantly. |
 | `pings.jsonl` | One JSON object per committed ping: `ts`, `sector`, `name`, `x`, `y`. |
+| `intents.jsonl` | One JSON object per injected commit in DSH mode: sector, action, region, screenshot path, OCR text/score/mode. |
+| `regions/` | PNG captures written by injected actions (`region-*.png`, `search-*.png`). |
 | `latency.jsonl` | Written only with `--latency-probe`: `ts`, `frame_ms`, `commit_ms`. |
 | `lolping.log` | Rolling diagnostic log; attach it when reporting a problem. |
 
@@ -158,6 +168,7 @@ All user data lives in `%APPDATA%\lolping-desktop\`:
 | `docs/06-report-outline.md` | Outline and evidence plan for the final report. |
 | `docs/07-build-and-release.md` | Packaging and release steps. |
 | `docs/08-report-draft.md` | Full report draft, with measurement placeholders marked TBD. |
+| `docs/10-dsh-plugin.md` | DSH bundle skeleton, install/verify steps and limits. |
 | `docs/09-roadmap.md` | Living roadmap: now / next / later, including the DSH plugin and multi-user research (Chinese: `docs/09-roadmap.zh-CN.md`). |
 
 ## Limitations
@@ -177,7 +188,12 @@ All user data lives in `%APPDATA%\lolping-desktop\`:
 - **Sound overlap.** The Windows `winsound` API plays one asynchronous sound at
   a time, so a newer cue interrupts the previous one. For short cues this is a
   deliberate trade-off, not a defect.
-- **Scope.** Windows only, fixed eight sectors in v0.3.4, no game awareness, no
+- **Image search.** On My Way currently opens a text search; the screenshot /
+  image-search tiers (M2) are not shipped yet.
+- **DSH bundle.** `plugin/lolping-intents` is a skeleton: it exposes the intent
+  log as a tool, but does not start an agent turn or write results back yet;
+  install it through the DSH bundle installer.
+- **Scope.** Windows only, fixed eight sectors in v0.4.0, no game awareness, no
   team or room features, no cross-platform support.
 
 ## License

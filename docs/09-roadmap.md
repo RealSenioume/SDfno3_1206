@@ -19,7 +19,7 @@ their own readers, but when they disagree with this file, this file wins.
 | Confirm the scaled-display fix on a second machine | A user reported the wheel appearing offset at 125–200 % scaling; the centre now comes from Qt's pointer. Measured on one machine only. | S | blocked on external hardware | v0.3.5 |
 | Bump to v0.3.5 and update the measurement/limitations text | The released 0.3.4 package predates the fix being called "fixed". | S | next | v0.3.5 |
 | Keep the README/doc consistency tests green | They caught the stale `0.3.1` / `Retreat` claims; keep them honest. | S | done | — |
-| JARVIS geo-window theme (`jarvis`): three rotating quarter-arc windows over baked Hong Kong contour / landmark / isotherm bands, angular-coverage reveal, `--jarvis-debug` overlay | The visual direction for the report and the demo; shows the wheel as a data instrument rather than a menu | M | now | v0.4.0 |
+| JARVIS geo-window theme (`jarvis`): three rotating quarter-arc windows over baked Hong Kong contour / landmark / isotherm bands, angular-coverage reveal, `--jarvis-debug` overlay | The visual direction for the report and the demo; shows the wheel as a data instrument rather than a menu | M | done | v0.4.0 |
 
 ## 2. Next — v0.4.x
 
@@ -128,3 +128,5 @@ line: it consumes intents, not the game.
 | Trigger on/off switch that mirrors the hotkey and the tray entry | v0.3.4 |
 | Wheel centre taken from Qt's pointer, fixing the offset on scaled displays; screen/dpr diagnostics in the log | v0.3.4 hotfix |
 | Stale version / default-sector claims in README corrected, with tests that keep them correct | v0.3.4 docs |
+| Jarvis data-instrument theme, DSH mode, intent pipeline, region capture, OCR text search, live settings preview | v0.4.0 |
+| DSH bundle skeleton `plugin/lolping-intents` (tool + tailer + Node tests) | v0.4.0 |
