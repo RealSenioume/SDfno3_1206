@@ -30,7 +30,7 @@ contains no Riot Games assets and no binary media files.
 ## Download
 
 **Windows v0.4.0** - `lolping-0.4.0-win64.zip`, 36.7 MB, SHA-256
-`e9899201e32243bbb8d1bfc5ceabe425f7172917eecd4dac16daaaf7ed232a3f`.
+`dd80f3b4e669a3e117e112f7b4f5850829f5c2f6c27283a0797c0defb7e66d3a`.
 Unzip it into an empty folder and run `lolping\lolping.exe`; the `_internal`
 folder must stay next to it. The executable is unsigned, so Windows SmartScreen
 may ask for confirmation.

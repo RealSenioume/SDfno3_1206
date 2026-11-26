@@ -24,7 +24,7 @@ On My Way 时，会把搜索 URL 交给默认浏览器打开，网络请求由�
 ## 下载
 
 **Windows v0.4.0** —— `lolping-0.4.0-win64.zip`，36.7 MB，SHA-256
-`e9899201e32243bbb8d1bfc5ceabe425f7172917eecd4dac16daaaf7ed232a3f`。
+`dd80f3b4e669a3e117e112f7b4f5850829f5c2f6c27283a0797c0defb7e66d3a`。
 解压到一个空文件夹后运行 `lolping\lolping.exe`，`_internal` 文件夹必须与它同级。
 exe 未签名，Windows SmartScreen 可能要求确认。
 

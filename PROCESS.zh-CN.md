@@ -164,9 +164,10 @@ Alt + 左键按住又松开、但不拖动：位于死区内，不会触发任�
 
 - 解决地标文字卡顿：字体、字形位图与弧形布局全部缓存，并在轮盘创建时预热。首次浮现从约 69 ms 的单帧降到约 9 ms；标签层每帧开销约 1.3 ms。
 
+- 修复第二台机器反馈的三个问题：缩放屏上磨砂背景只覆盖左上角四分之一（pixmap 的 source rect 按设备像素解释，已改用 point 重载）；release 版丢失全部烘焙环纹理（PyInstaller 6 把 `datas` 放在 `_internal`，旧的冻结路径查找只看 exe 同级目录）；圆盘靠近屏幕边缘时截图不再以轮盘为中心（改为补边裁剪，让光标始终位于图像中心）。冻结版 `--self-test` 现在会检查纹理能否加载，打包阶段即失败，而不是把裸环发布出去。
 - 新增 **DSH 插件骨架** `plugin/lolping-intents`（bundle manifest、patch、locale、图标、`lolping_intents` 工具、日志 tailer、Node 测试）。它只读，且仍是骨架：不会自动发起 agent 回合，也不写回结果。
 
-- 用 Python 3.12.10 与 PyInstaller 6.22.3 打出 v0.4.0 包：`release/lolping-0.4.0-win64.zip`（36.7 MB，sha256 `e9899201e322...232a3f`）。打包前跑了测试套件、双语检查与冻结版无界面自检；仓库直接提交 zip，因为这台机器仍没有 release asset 工具。
+- 用 Python 3.12.10 与 PyInstaller 6.22.3 打出 v0.4.0 包：`release/lolping-0.4.0-win64.zip`（36.7 MB，sha256 `dd80f3b4e669...e66d3a`）。打包前跑了测试套件、双语检查与冻结版无界面自检；仓库直接提交 zip，因为这台机器仍没有 release asset 工具。
 - 项目迁移到新仓库 `SDfno3_1206`；旧仓库 `SDfno3_1101` 保留为 `old-origin`。该 tag 下 235 项测试与双语检查均通过。
 
 - 11.26.2026

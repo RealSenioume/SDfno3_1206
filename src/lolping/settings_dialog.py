@@ -167,7 +167,13 @@ class WheelPreview(QWidget):
         if grabbed.isNull():
             return None
         blurred = grabbed.scaled(40, 40, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-        return blurred.scaled(self.SIZE, self.SIZE, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        result = blurred.scaled(
+            self.SIZE, self.SIZE, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+        )
+        # grabWindow returns a device-pixel pixmap on a scaled display; without
+        # resetting the DPR it is drawn at 1/DPR of the box (a top-left quarter).
+        result.setDevicePixelRatio(1.0)
+        return result
 
     def _current_step(self) -> tuple[str, float, float]:
         name, duration = self._STEPS[self._state_index]

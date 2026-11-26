@@ -165,9 +165,10 @@ For more details during development, check out the docs.
 
 - Cut the landmark-label stutter: fonts, glyph pixmaps and arc layouts are cached and pre-warmed at wheel creation. The first reveal dropped from a ~69 ms frame to ~9 ms; the label pass now costs about 1.3 ms per frame.
 
+- Fixed three reports from the second machine: the frosted backdrop covered only a top-left quarter on scaled displays (the pixmap source rectangle is read in device pixels, so the point overload is used now), the release build silently dropped every baked ring texture (PyInstaller 6 keeps `datas` under `_internal`, and the frozen lookup only checked the exe folder), and captures near a screen edge were no longer centred on the wheel (the crop is padded and keeps the pointer at the image centre). The frozen `--self-test` now verifies the textures load, so the packaging step fails instead of shipping bare rings.
 - Added the **DSH bundle skeleton** `plugin/lolping-intents` (bundle manifest, patch, locale, icon, `lolping_intents` tool, log tailer, Node tests). It is read-only and still a skeleton: no automatic agent turn and no result write-back.
 
-- Packaged v0.4.0 with Python 3.12.10 and PyInstaller 6.22.3: `release/lolping-0.4.0-win64.zip` (36.7 MB, sha256 `e9899201e322...232a3f`). The build ran the test suite, the bilingual check and a frozen offscreen self-test before zipping; the zip is committed because this machine still has no release-asset tooling.
+- Packaged v0.4.0 with Python 3.12.10 and PyInstaller 6.22.3: `release/lolping-0.4.0-win64.zip` (36.7 MB, sha256 `dd80f3b4e669...e66d3a`). The build ran the test suite, the bilingual check and a frozen offscreen self-test before zipping; the zip is committed because this machine still has no release-asset tooling.
 - Moved the project to the new repository `SDfno3_1206`; the old `SDfno3_1101` remote is kept as `old-origin`. 235 tests and the bilingual check pass at this tag.
 
 - 11.26.2026

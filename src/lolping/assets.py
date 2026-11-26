@@ -366,18 +366,36 @@ def assets_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "assets" / "icons"
 
 
+def frozen_asset_dirs() -> list[Path]:
+    """Folders that may hold bundled data in a frozen build.
+
+    PyInstaller 6 one-folder builds put ``datas`` under ``sys._MEIPASS``
+    (``dist/lolping/_internal``), not next to the executable, so checking only
+    ``Path(sys.executable).parent`` silently dropped every baked texture from
+    the release build.
+    """
+    import sys
+
+    dirs: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        dirs.append(Path(meipass) / "assets" / "jarvis")
+    if getattr(sys, "frozen", False):
+        dirs.append(Path(sys.executable).resolve().parent / "assets" / "jarvis")
+        dirs.append(
+            Path(sys.executable).resolve().parent / "_internal" / "assets" / "jarvis"
+        )
+    return dirs
+
+
 def jarvis_dir() -> Path:
     """Folder holding the baked JARVIS band textures.
 
-    Tries the source tree first, then the folder next to a frozen executable
-    (PyInstaller one-folder builds place ``assets/jarvis`` there).
+    Tries the source tree first, then every frozen-build data directory.
     """
     candidates = [Path(__file__).resolve().parents[2] / "assets" / "jarvis"]
     try:
-        import sys
-
-        if getattr(sys, "frozen", False):
-            candidates.append(Path(sys.executable).resolve().parent / "assets" / "jarvis")
+        candidates.extend(frozen_asset_dirs())
     except Exception:  # pragma: no cover - defensive
         pass
     for candidate in candidates:

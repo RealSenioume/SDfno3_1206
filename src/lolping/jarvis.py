@@ -266,11 +266,11 @@ class JarvisRenderer:
                     painter.setClipPath(clip)
                     base_opacity = painter.opacity()
                     painter.setOpacity(max(0.0, min(1.0, base_opacity * ease)))
-                    painter.drawPixmap(
-                        QRectF(cx - half, cy - half, logical, logical),
-                        frost,
-                        QRectF(frost.rect()),
-                    )
+                    # Point overload: drawPixmap honours the pixmap DPR and
+                    # paints its logical size, whereas a source rectangle is
+                    # read in device pixels and showed only the top-left
+                    # quarter on a 150-200 % display.
+                    painter.drawPixmap(QPointF(cx - half, cy - half), frost)
                 finally:
                     painter.restore()
             else:

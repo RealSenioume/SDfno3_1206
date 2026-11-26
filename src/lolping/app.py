@@ -373,13 +373,15 @@ class PingApp:
         region = None
         screenshot = ""
         if screen is not None:
-            area = screen.geometry()
-            x = max(area.x(), min(point.x() - width // 2, area.x() + area.width() - width))
-            y = max(area.y(), min(point.y() - height // 2, area.y() + area.height() - height))
-            region = (x, y, width, height)
+            region = (
+                int(point.x() - width // 2),
+                int(point.y() - height // 2),
+                width,
+                height,
+            )
             stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             destination = intent.regions_dir() / f"search-{stamp}.png"
-            if intent.capture_region(screen, region, destination):
+            if intent.capture_centered(screen, point, width, height, destination):
                 screenshot = str(destination)
         result = ocr.recognize(screenshot) if screenshot else None
         score, query = ocr.usability(result)
@@ -442,16 +444,19 @@ class PingApp:
         screen = QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
         if screen is None:
             return
-        area = screen.geometry()
         width, height = 640, 360
-        x = max(area.x(), min(point.x() - width // 2, area.x() + area.width() - width))
-        y = max(area.y(), min(point.y() - height // 2, area.y() + area.height() - height))
+        region = (
+            int(point.x() - width // 2),
+            int(point.y() - height // 2),
+            width,
+            height,
+        )
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         destination = intent.regions_dir() / f"region-{stamp}.png"
-        saved = intent.capture_region(screen, (x, y, width, height), destination)
+        saved = intent.capture_centered(screen, point, width, height, destination)
         self._write_dsh_intent(
             name, point, actions.CAPTURE_REGION,
-            region=(x, y, width, height),
+            region=region,
             screenshot=str(destination) if saved else "",
         )
 
@@ -649,6 +654,13 @@ def run_self_test() -> int:
     application.setQuitOnLastWindowClosed(False)
 
     config = Config()
+    # Frozen builds used to drop assets/jarvis (PyInstaller 6 keeps datas under
+    # _internal); check the baked textures here so the build's self-test catches
+    # a missing asset instead of users seeing bare rings.
+    textures_ok = all(
+        assets.jarvis_pixmap(name) is not None
+        for name in ("contours", "isotherms", "frost")
+    )
     overlay = OverlayManager(config)
     captured: dict[str, str] = {}
     overlay.committed.connect(lambda name, _pos: captured.setdefault("name", name))
@@ -663,11 +675,14 @@ def run_self_test() -> int:
     application.exec_()
     overlay.shutdown()
 
-    ok = bool(opened and captured)
+    ok = bool(opened and captured and textures_ok)
     if ok:
-        print(f"SELF-TEST OK sector={captured.get('name')}")
+        print(f"SELF-TEST OK sector={captured.get('name')} textures=ok")
         return 0
-    print(f"SELF-TEST FAILED opened={opened} committed={captured}")
+    print(
+        f"SELF-TEST FAILED opened={opened} committed={captured} "
+        f"textures={textures_ok}"
+    )
     return 1
 
 
