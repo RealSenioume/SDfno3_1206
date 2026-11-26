@@ -8,7 +8,9 @@ Project root: the repository root (the folder that contains `src/`)
 Package root: `src/lolping`
 
 Target: Python 3.14 + PyQt5 5.15.11 + pynput 1.8.2, Windows 11. No new runtime
-dependencies. No network access at runtime. No reading/writing game memory.
+dependencies. No network access from the lolping process (no sockets, HTTP, DNS or
+telemetry); the only network-adjacent action hands a search URL to the default
+browser. No reading/writing game memory.
 
 ---
 

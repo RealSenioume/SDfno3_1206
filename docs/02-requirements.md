@@ -128,12 +128,12 @@ mandatory requirement. Values that are not fixed yet are written as
 | NFR-02 | Idle CPU below 1% average over a 60 s sample with only the tray icon present. | Task Manager / Resource Monitor. |
 | NFR-03 | Idle RAM below 120 MB working set under the same conditions. | Task Manager. |
 | NFR-04 | Cold start below 3 s from launch to a usable tray icon. | Five timed launches; median. |
-| NFR-05 | No network access at runtime: no sockets, HTTP, DNS or telemetry. | Code review; network monitor. |
+| NFR-05 | No network access from the lolping process: no sockets, HTTP, DNS or telemetry. DSH-mode searches hand a URL to the default browser (browser traffic is out of scope), and the optional DSH bundle only reads local intent files. | Code review; network monitor while triggering each action. |
 | NFR-06 | No interaction with the game process: no memory access, injection, Riot API or game-window reading. | Code review; contract. |
 | NFR-07 | Robustness: hostile config never prevents start; a dead input listener is restarted and logged; screen changes, sleep/resume and rapid gestures do not crash. | Fault injection TC-20; supervisor review; soak PT-04. |
 | NFR-08 | Compatibility: Windows 11; 100/125/150% scaling; one or two monitors; windowed, borderless and exclusive-fullscreen targets; normal and elevated targets. | Matrix E1–E12. |
 | NFR-09 | Usability: all settings in one dialog with visible labels; Cancel changes nothing; user-visible strings in English. | Inspection; walkthrough. |
-| NFR-10 | Privacy: data stays local; logs are plain files the user can inspect and delete; no telemetry. | Inspection; network monitor. |
+| NFR-10 | Privacy: lolping data stays local; logs and screenshots are plain files the user can inspect and delete; no telemetry. If the optional DSH bundle is installed, the agent may send a captured PNG to its model — that is DSH's network use, not lolping's; the bundle itself only reads local files. | Inspection; network monitor. |
 | NFR-11 | Maintainability: public functions typed and documented; modules importable alone; pure logic free of Qt; `logging` instead of `print()`. | Code review; unit-test imports. |
 | NFR-12 | Accessibility: Esc cancels from the keyboard; rim labels can be hidden without losing the centre label. | TC-06, TC-11. |
 | NFR-13 | Drawing slice icons and custom pixmaps must add no more than 5 ms per frame at the default wheel size and icon size on the reference machine, keeping the NFR-01 latency budget intact. | Compare frame timing with icons on and off; frame-time instrumentation. |
@@ -196,7 +196,7 @@ stops the input listener and exits cleanly.
 
 - **C1:** Windows 11 x64 only.
 - **C2:** Python 3.14, PyQt5 5.15.11, pynput 1.8.2; no new runtime dependencies.
-- **C3:** No network access and no game-process interaction.
+- **C3:** No network access from the lolping process and no game-process interaction (the browser-handoff exception is documented in NFR-05).
 - **C4:** Normal operation needs no administrator rights; elevated targets remain
   a documented limitation.
 - **C5:** Four-week delivery, three developers in parallel, file ownership and

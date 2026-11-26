@@ -18,7 +18,9 @@ contract (`docs/00-interfaces.md`).
 The engineering question is whether a small Python/Qt desktop application can
 deliver this interaction with a p95 wheel latency of 50 ms, negligible idle
 resource use, predictable behaviour on scaled and multi-monitor desktops, and
-local logging — without reading game memory or using the network — while three
+local logging — without reading game memory, and without the application
+itself using the network (DSH-mode searches are handed to the user's browser) —
+while three
 developers implement it in parallel in four weeks.
 
 ## 1.2 Aim

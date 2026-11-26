@@ -9,8 +9,10 @@ release. The wheel closes, a short burst confirms the choice, and the choice is
 written to a local log file.
 
 lolping does not connect to League of Legends: it does not read game memory,
-does not use the Riot API and does not use the network. It only draws an overlay
-and records what you selected.
+does not use the Riot API, and does not connect to the network itself. It only
+draws an overlay and records what you selected. In DSH mode, committing
+**On My Way** opens a search URL in your default browser; that browser request is
+the only network activity involved, and it happens outside lolping.
 
 All slice icons are original vector drawings and all sound cues are synthesised
 by the application at run time; no Riot Games artwork or audio is included.
@@ -232,7 +234,7 @@ screen position of each commit.
 | A slice shows the vector icon instead of my custom PNG. | The `sector_images` path is wrong, the file is not a readable PNG, or the index is not the slice you meant. Use a full absolute path with doubled backslashes in `config.json`; a broken path falls back to the vector icon by design. |
 | Sound cues cut each other off. | Windows `winsound` plays one asynchronous cue at a time: a new cue stops the previous one. This is a documented trade-off, not a fault. |
 | Higher CPU or memory use than expected. | Measure while idle with only the tray icon present; close other copies in Task Manager. Report the numbers from Task Manager if the values exceed the documented limits. |
-| Antivirus warns about a global keyboard hook. | Global input hooks are sometimes flagged heuristically. lolping is open source, uses no network and can be allow-listed; the warning is about the hook, not about modifying other programs. |
+| Antivirus warns about a global keyboard hook. | Global input hooks are sometimes flagged heuristically. lolping is open source, uses no network itself and can be allow-listed; the warning is about the hook, not about modifying other programs. |
 
 ## 5.12 Uninstalling
 

@@ -56,7 +56,7 @@ The release zip is ignored by git; it is an artifact, not source.
 * No administrator rights. Everything is per-user: the virtual environment
   lives in the repository, and the app writes to `%APPDATA%\lolping-desktop`.
 * Network access for `pip install` on the build machine (the app itself never
-  uses the network).
+  uses the network; DSH-mode searches only hand URLs to the default browser).
 
 The repository uses a `src/` layout (`src/lolping/...`) and ships a
 `pyproject.toml`, but the package is not installed by default. Either install it

@@ -9,9 +9,13 @@ the choice, and the ping is appended to a local log file.
 
 **lolping is not an in-game tool.** It does not read or write League of Legends
 memory, does not inject into or communicate with the game process, does not use
-the Riot API, and opens no network connections. It is an ordinary desktop
-overlay: it draws a translucent wheel at the mouse cursor and records the ping
-the user picked in a local JSONL file.
+the Riot API, and the lolping process itself opens no network connections: no
+sockets, HTTP, DNS or telemetry. It is an ordinary desktop overlay: it draws a
+translucent wheel at the mouse cursor and records the ping the user picked in a
+local JSONL file. The one network-adjacent action is deliberate and
+user-triggered: in DSH mode, committing **On My Way** hands a search URL to the
+default browser, so the request is made by that browser, not by lolping. The
+optional DSH bundle also only reads local intent files.
 
 The project ships no third-party artwork or audio. Slice icons are original
 vector `QPainterPath` geometry generated in `src/lolping/assets.py`, and the
@@ -21,7 +25,8 @@ contains no Riot Games assets and no binary media files.
 - Version: **0.4.0**
 - Platform: **Windows 11** (64-bit)
 - Runtime: **Python 3.14**, **PyQt5 5.15.11**, **pynput 1.8.2**
-- No other runtime dependencies, no network access at runtime
+- No other runtime dependencies; lolping itself makes no network connections
+  (DSH-mode searches open the default browser, which does)
 ## Download
 
 **Windows v0.4.0** - `lolping-0.4.0-win64.zip`, 36.7 MB, SHA-256
