@@ -1,5 +1,5 @@
 # V0.4.0
-- Background blur issue: only rendered a upper-left quarter
+- Background blur issue: only rendered a upper-left quarter, and it might has some logic issue on render layer.
 - Map texture missing
 - upload to the https://github.com/orgs/sd5913
 - Prof: release ver in github, not just the release zip file
